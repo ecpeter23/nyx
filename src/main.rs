@@ -2,7 +2,7 @@ mod cli;
 mod commands;
 mod utils;
 mod walk;
-mod index;
+mod database;
 
 use crate::utils::Config;
 use cli::Cli;

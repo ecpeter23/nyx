@@ -3,7 +3,7 @@ use crate::utils::project::get_project_info;
 use std::path::Path;
 use crate::utils::config::Config;
 use tree_sitter::{Parser};
-use crate::index::index::Indexer;
+use crate::database::index::Indexer;
 use crate::walk::spawn_senders;
 
 pub fn handle(
