@@ -1,0 +1,14 @@
+[package]
+name = "Nano"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+directories = "6.0.0"
+clap = { version = "4.5.40", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
+toml = "0.8.23"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json", "ansi","time"] }
+tracing-appender = "0.2.3"
+tracing = "0.1.41"
+time = "0.3.41"
