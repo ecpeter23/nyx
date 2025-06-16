@@ -75,3 +75,90 @@ pub mod index {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use crate::database::index::Indexer;
+  use std::error::Error;
+  use std::io::Write;
+  use tempfile::tempdir;
+
+  /// Returns a freshly‑initialised `Indexer` backed by an *in‑memory* SQLite
+  /// database. Using `:memory:` sidesteps file‑system lifetime issues that can
+  /// occur when the temporary database file is deleted while a connection is
+  /// still open.
+  fn new_indexer() -> Indexer {
+    Indexer::new(std::path::Path::new(":memory:"))
+      .expect("create in‑memory Indexer")
+  }
+
+  #[test]
+  fn new_file_is_flagged_for_scan() -> Result<(), Box<dyn Error>> {
+    let indexer = new_indexer();
+
+    let dir = tempdir()?;
+    let file_path = dir.path().join("hello.txt");
+    std::fs::write(&file_path, b"hello world")?;
+
+    // File has never been seen ⇒ should be scanned.
+    assert!(indexer.should_scan(&file_path)?);
+    Ok(())
+  }
+
+  #[test]
+  fn unchanged_file_is_not_flagged_again() -> Result<(), Box<dyn Error>> {
+    let indexer = new_indexer();
+    let dir = tempdir()?;
+    let file_path = dir.path().join("foo.txt");
+    std::fs::write(&file_path, b"abc123")?;
+
+    // First pass – record the scan result.
+    indexer.record_scan(&file_path)?;
+
+    // Nothing changed – should_scan must return false.
+    assert!(!indexer.should_scan(&file_path)?);
+    Ok(())
+  }
+
+  #[test]
+  fn modified_content_triggers_rescan() -> Result<(), Box<dyn Error>> {
+    let indexer = new_indexer();
+    let dir = tempdir()?;
+    let file_path = dir.path().join("bar.txt");
+    std::fs::write(&file_path, b"first")?;
+    indexer.record_scan(&file_path)?;
+
+    // Append data to change the hash.
+    let mut file = std::fs::OpenOptions::new()
+      .append(true)
+      .open(&file_path)?;
+    writeln!(file, "second line")?;
+
+    assert!(indexer.should_scan(&file_path)?);
+    Ok(())
+  }
+
+  #[test]
+  fn modified_mtime_alone_triggers_rescan() -> Result<(), Box<dyn Error>> {
+    // Compile this test only when the optional `filetime` feature is enabled.
+    #[cfg(feature = "filetime")] {
+      use std::time::{Duration, SystemTime};
+      use filetime::FileTime;
+
+      let indexer = new_indexer();
+      let dir = tempdir()?;
+      let file_path = dir.path().join("baz.txt");
+      std::fs::write(&file_path, b"unchanged content")?;
+      indexer.record_scan(&file_path)?;
+
+      // Bump the modification time without touching the contents.
+      let now_plus = SystemTime::now() + Duration::from_secs(5);
+      let new_mtime = FileTime::from_system_time(now_plus);
+      filetime::set_file_mtime(&file_path, new_mtime)?;
+
+      assert!(indexer.should_scan(&file_path)?);
+    }
+
+    Ok(())
+  }
+}
