@@ -156,6 +156,7 @@ impl Default for PerformanceConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
+#[derive(Default)]
 pub struct Config {
     pub scanner: ScannerConfig,
     pub database: DatabaseConfig,
@@ -163,16 +164,6 @@ pub struct Config {
     pub performance: PerformanceConfig,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            scanner: ScannerConfig::default(),
-            database: DatabaseConfig::default(),
-            output: OutputConfig::default(),
-            performance: PerformanceConfig::default(),
-        }
-    }
-}
 
 impl Config {
     pub fn load(

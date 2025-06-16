@@ -76,7 +76,7 @@ pub fn spawn_senders(
                 
                 let mut b = Batcher { tx: tx.clone(), batch: Vec::with_capacity(BATCH_SIZE) };
                 match entry {
-                    Ok(e) if e.file_type().map_or(false, |ft| ft.is_file()) => {
+                    Ok(e) if e.file_type().is_some_and(|ft| ft.is_file()) => {
                         b.push(e.into_path());
                         if batch.len() == BATCH_SIZE {
                             let _ = tx.send(std::mem::take(&mut batch));
