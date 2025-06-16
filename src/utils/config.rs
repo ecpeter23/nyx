@@ -14,6 +14,9 @@ pub struct ScannerConfig {
     
     /// Directories to exclude from scanning. TODO: IMPLEMENT
     pub excluded_directories: Vec<String>,
+    
+    /// Excluded files
+    pub excluded_files: Vec<String>,
 
     /// Whether to respect the global ignore file or not. TODO: IMPLEMENT
     pub read_global_ignore: bool,
@@ -24,10 +27,10 @@ pub struct ScannerConfig {
     /// Whether to require a `.git` directory to respect gitignore files. TODO: IMPLEMENT
     pub require_git_to_read_vcsignore: bool,
 
-    /// Whether to limit the search to starting file system or not. TODO: IMPLEMENT
+    /// Whether to limit the search to starting file system or not.
     pub one_file_system: bool,
     
-    /// Whether to follow symlinks or not. TODO: IMPLEMENT
+    /// Whether to follow symlinks or not. 
     pub follow_symlinks: bool,
     
     /// Whether to scan hidden files or not. TODO: IMPLEMENT
@@ -50,6 +53,10 @@ impl Default for ScannerConfig {
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
+            excluded_files: vec![]
+              .into_iter()
+              .map(str::to_owned)
+              .collect(),
             read_global_ignore: false,
             read_vcsignore: true,
             require_git_to_read_vcsignore: true,
@@ -125,7 +132,7 @@ pub struct PerformanceConfig {
     pub prune: bool, // TODO: IMPLEMENT
 
     /// The maximum number of worker threads to use., or `None` to auto-detect.
-    pub worker_threads: Option<u32>, // TODO: IMPLEMENT
+    pub worker_threads: Option<usize>, // TODO: IMPLEMENT
     
     /// The maximum number of entries to index in a single chunk.
     pub index_chunk_size: u32, // TODO: IMPLEMENT

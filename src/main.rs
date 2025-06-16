@@ -1,6 +1,8 @@
 mod cli;
 mod commands;
 mod utils;
+mod walk;
+mod index;
 
 use crate::utils::Config;
 use cli::Cli;
@@ -30,9 +32,9 @@ fn init_tracing() {
     //     .json();
 
     Registry::default()
-        .with(EnvFilter::from_default_env()) // obey RUST_LOG
+        .with(EnvFilter::from_default_env()) 
         .with(fmt_layer)         
-        .init();                             // install as the global subscriber
+        .init();
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

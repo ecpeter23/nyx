@@ -9,6 +9,16 @@ clap = { version = "4.5.40", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }
 toml = "0.8.23"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json", "ansi","time"] }
-tracing-appender = "0.2.3"
 tracing = "0.1.41"
-time = "0.3.41"
+num_cpus = "1.17.0"
+
+rusqlite = "0.36.0"
+anyhow = "1.0.98"
+
+ignore = "0.4.23"
+tree-sitter = "0.25.6"
+tree-sitter-rust = "0.24.0"
+crossbeam-channel = "0.5.15"
+regex = "1.11.1"
+blake3 = "1.8.2"
+nix = { version = "0.30.1", features = ["signal"] }
