@@ -2,10 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path};
 use std::fs;
 use toml;
+use crate::patterns::Severity;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct ScannerConfig {
+    /// The minimum severity level to output
+    pub min_severity: Severity,
+    
     /// The maximum file size to scan, in megabytes. TODO: IMPLEMENT
     pub max_file_size_mb: u64,
     
@@ -39,6 +43,7 @@ pub struct ScannerConfig {
 impl Default for ScannerConfig {
     fn default() -> Self {
         Self {
+            min_severity: Severity::Low,
             max_file_size_mb: 100,
             excluded_extensions: vec![
                 "jpg", "png", "gif", "mp4", "avi", "mkv",
