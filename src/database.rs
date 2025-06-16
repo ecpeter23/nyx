@@ -141,7 +141,7 @@ mod tests {
   #[test]
   fn modified_mtime_alone_triggers_rescan() -> Result<(), Box<dyn Error>> {
     // Compile this test only when the optional `filetime` feature is enabled.
-    #[cfg(feature = "filetime")] {
+    {
       use std::time::{Duration, SystemTime};
       use filetime::FileTime;
 
