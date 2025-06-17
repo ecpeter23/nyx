@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::utils::config::Config;
 use tree_sitter::{Language, Parser, QueryCursor, StreamingIterator};
 use crate::database::index::Indexer;
+use crate::patterns::Severity;
 use crate::utils::query_cache;
 use crate::walk::spawn_senders;
 
@@ -20,25 +21,25 @@ pub fn handle(
     let (project_name, db_path) = get_project_info(&scan_path, database_dir)?;
 
     tracing::debug!("Config: {:?}", config);
-    tracing::info!("Scanning project: {}", project_name);
-    tracing::info!("Scan path: {}", scan_path.display());
+    tracing::debug!("Scanning project: {}", project_name);
+    tracing::debug!("Scan path: {}", scan_path.display());
 
     if no_index {
-        tracing::info!("Scanning without index...");
+        tracing::debug!("Scanning without index...");
         scan_filesystem(&scan_path, config)?;
     } else {
         if rebuild_index || !db_path.exists() {
-            tracing::info!("Building/updating index...");
+            tracing::debug!("Building/updating index...");
             crate::commands::index::build_index(&scan_path, &db_path)?;
         }
 
-        tracing::info!("Using index: {}", db_path.display());
+        tracing::debug!("Using index: {}", db_path.display());
         scan_with_index(&scan_path, &db_path, config)?;
     }
 
-    tracing::info!("Output format: {:?}", format);
+    tracing::debug!("Output format: {:?}", format);
     if high_only {
-        tracing::info!("Filtering: High severity only");
+        tracing::debug!("Filtering: High severity only");
     }
 
     Ok(())
@@ -120,14 +121,41 @@ fn scan_single_file(
                 let point = cap.node.start_position();
                 let line = point.row;
                 let col = point.column;
-                tracing::warn!(
-                    file   = %path.display(),
-                    line   = line + 1,
-                    column = col + 1,
-                    id     = cq.meta.id,
-                    sev    = ?cq.meta.severity,
-                    "pattern matched"
-                );
+                
+                match cq.meta.severity {
+                    Severity::High => {
+                        tracing::error!(
+                            file   = %path.display(),
+                            line   = line + 1,
+                            column = col + 1,
+                            id     = cq.meta.id,
+                            sev    = ?Severity::High,
+                            "pattern matched"
+                        );
+                    },
+                    Severity::Medium => {
+                        tracing::warn!(
+                            file   = %path.display(),
+                            line   = line + 1,
+                            column = col + 1,
+                            id     = cq.meta.id,
+                            sev    = ?Severity::Medium,
+                            "pattern matched"
+                        );
+                    }
+                    Severity::Low => {
+                        tracing::info!(
+                            file   = %path.display(),
+                            line   = line + 1,
+                            column = col + 1,
+                            id     = cq.meta.id,
+                            sev    = ?Severity::Low,
+                            "pattern matched"
+                        );
+                    }
+                }
+                
+                
             }
         }
     }

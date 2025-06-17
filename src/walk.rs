@@ -76,7 +76,7 @@ pub fn spawn_senders(
             let mut batch = Vec::<PathBuf>::with_capacity(256);
 
             Box::new(move |entry| {
-                tracing::info!("walking: {:?}", entry);
+                tracing::debug!("walking: {:?}", entry);
                 
                 let mut b = Batcher { tx: tx.clone(), batch: Vec::with_capacity(BATCH_SIZE) };
                 match entry {
@@ -86,7 +86,7 @@ pub fn spawn_senders(
                             let _ = tx.send(std::mem::take(&mut batch));
                         }
                     }
-                    Err(err) => eprintln!("walk error: {err}"),
+                    Err(err) => tracing::error!("walk error: {err}"),
                     _ => {}
                 }
                 WalkState::Continue
