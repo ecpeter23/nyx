@@ -19,7 +19,7 @@ use tracing_subscriber::fmt::time;
 // use tracing_appender::non_blocking;
 
 fn init_tracing() {
-    // let file_appender = RollingFileAppender::new(Rotation::HOURLY, "logs", "nano-scanner.log");
+    // let file_appender = RollingFileAppender::new(Rotation::HOURLY, "logs", "nyx-scanner.log");
     // let (file_writer, guard) = non_blocking(file_appender);
     
     let fmt_layer = fmt::layer()
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!("CLI starting up");
     let cli = Cli::parse();
 
-    let proj_dirs = ProjectDirs::from("dev", "ecpeter23", "nano")
+    let proj_dirs = ProjectDirs::from("dev", "ecpeter23", "nyx")
         .ok_or("Unable to determine project directories")?;
 
     let config_dir = proj_dirs.config_dir();

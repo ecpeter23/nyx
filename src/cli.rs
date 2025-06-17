@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "nano")]
+#[command(name = "nyx")]
 #[command(about = "A fast vulnerability scanner with project indexing")]
 #[command(version)]
 pub struct Cli {

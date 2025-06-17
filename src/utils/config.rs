@@ -176,12 +176,12 @@ impl Config {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = Config::default();
 
-        let default_config_path = config_dir.join("nano.conf");
+        let default_config_path = config_dir.join("nyx.conf");
         if !default_config_path.exists() {
             create_example_config(config_dir)?;
         }
 
-        let user_config_path = config_dir.join("nano.local");
+        let user_config_path = config_dir.join("nyx.local");
         if user_config_path.exists() {
             let user_config_content = fs::read_to_string(&user_config_path)?;
             let user_config: Config = toml::from_str(&user_config_content)?;
@@ -200,16 +200,16 @@ impl Config {
 fn create_example_config(
     config_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let example_path = config_dir.join("nano.conf");
+    let example_path = config_dir.join("nyx.conf");
 
     let default_config = Config::default();
     let toml_content = toml::to_string_pretty(&default_config)?;
 
     // Add comments to make it user-friendly
     let commented_content = format!(
-            "# Nano Vulnerability Scanner Configuration\n\
+            "# nnyx Vulnerability Scanner Configuration\n\
              # YOU SHOULD NOT MODIFY THIS FILE.\n\
-             # Create/modify 'nano.local' to set configs\n\
+             # Create/modify 'nyx.local' to set configs\n\
              # Only include the sections you want to override\n\n{}",
         toml_content
     );
