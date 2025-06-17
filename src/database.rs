@@ -1,11 +1,15 @@
 pub mod index {
-  use rusqlite::{params, Connection, OptionalExtension};
+  use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
   use std::fs;
   use std::path::{Path, PathBuf};
   use std::str::FromStr;
   use std::time::{SystemTime, UNIX_EPOCH};
   use crate::commands::scan::Diag;
   use crate::patterns::Severity;
+  use r2d2_sqlite::{SqliteConnectionManager};
+  use std::ops::Deref;
+  use std::sync::Arc;
+  use r2d2::{Pool, PooledConnection};
 
   /// DB schema (foreign‑keys enabled).
   const SCHEMA: &str = r#"
@@ -43,17 +47,47 @@ pub mod index {
   }
 
   pub struct Indexer {
-    conn: Connection,
+    conn: PooledConnection<SqliteConnectionManager>,
     project: String,
   }
 
   impl Indexer {
-    /// Open (or create) the DB at `database_path` for the given project name.
-    pub fn new(project: &str, database_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-      let conn = Connection::open(database_path)?;
-      conn.execute_batch(SCHEMA)?;
+
+    pub fn init(
+      database_path: &Path,
+    ) -> Result<std::sync::Arc<Pool<SqliteConnectionManager>>, Box<dyn std::error::Error>> {
+      let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+      let manager         = SqliteConnectionManager::file(&database_path).with_flags(flags);
+      let pool  = Arc::new(Pool::new(manager)?);
+
+      {
+        let conn = pool.get()?;
+        conn.pragma_update(None, "journal_mode", &"WAL")?;
+        conn.execute_batch(SCHEMA)?;
+      }
+      Ok(pool)
+    }
+
+    pub fn from_pool(
+      project: &str,
+      pool: &Pool<SqliteConnectionManager>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+      let conn = pool.get()?;
       Ok(Self { conn, project: project.to_owned() })
     }
+
+    // helper so code below can treat PooledConnection like &Connection
+    fn c(&self) -> &Connection { self.conn.deref() }
+
+    /// Open (or create) the DB at `database_path` for the given project name.
+    // pub fn new(project: &str, database_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    //   let conn = Connection::open(database_path)?;
+    //   conn.pragma_update(None, "journal_mode", &"WAL")?;
+    //   conn.execute_batch(SCHEMA)?;
+    //   Ok(Self { conn, project: project.to_owned() })
+    // }
 
     /// Return true when the file *content* or *mtime* changed since the last scan.
     pub fn should_scan(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
@@ -83,7 +117,7 @@ pub mod index {
       let scanned_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
       let digest = Self::digest_file(path)?;
 
-      self.conn.execute(
+      self.c().execute(
         "INSERT INTO files (project, path, hash, mtime, scanned_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(project,path) DO UPDATE
@@ -93,7 +127,7 @@ pub mod index {
         params![self.project, path.to_string_lossy(), digest, mtime, scanned_at],
       )?;
 
-      let id: i64 = self.conn.query_row(
+      let id: i64 = self.c().query_row(
         "SELECT id FROM files WHERE project = ?1 AND path = ?2",
         params![self.project, path.to_string_lossy()],
         |r| r.get(0),
@@ -125,13 +159,13 @@ pub mod index {
       &self,
       path: &Path,
     ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
-      let file_id: i64 = self.conn.query_row(
+      let file_id: i64 = self.c().query_row(
         "SELECT id FROM files WHERE project = ?1 AND path = ?2",
         params![self.project, path.to_string_lossy()],
         |r| r.get(0),
       )?;
       
-      let mut stmt = self.conn.prepare(
+      let mut stmt = self.c().prepare(
         "SELECT rule_id, severity, line, col
          FROM issues
          WHERE file_id = ?1",
@@ -153,7 +187,7 @@ pub mod index {
     
     /// gets files from the database
     pub fn get_files(&self, project: &str) -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
-      let mut stmt = self.conn.prepare(
+      let mut stmt = self.c().prepare(
         "SELECT path
          FROM files
          WHERE project = ?1",
@@ -162,6 +196,24 @@ pub mod index {
       let file_iter = stmt.query_map([project], |row| row.get::<_, String>(0))?;
       
       Ok(file_iter.map(|p| p.map(PathBuf::from)).collect::<Result<_, _>>()?)
+    }
+
+    /// Clears the tables to prep for a reindex
+    pub fn clear(&self) -> rusqlite::Result<()> {
+      self.c().execute_batch(
+        r#"
+        PRAGMA foreign_keys = OFF;
+
+        DROP TABLE IF EXISTS issues;
+        DROP TABLE IF EXISTS files;
+
+        PRAGMA foreign_keys = ON;
+        VACUUM;
+        "#,
+      )?;
+      
+      self.c().execute_batch(SCHEMA)?;
+      Ok(())
     }
 
     fn digest_file(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {

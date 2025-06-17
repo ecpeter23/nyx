@@ -5,6 +5,7 @@ use crate::patterns::Severity;
 use crate::utils::Config;
 use crate::utils::project::get_project_info;
 use crate::walk::spawn_senders;
+use rayon::prelude::*;
 
 pub fn handle(
     action: IndexAction,
@@ -50,27 +51,35 @@ pub fn build_index(
     tracing::debug!("Building index for: {}", project_name);
     fs::File::create(db_path)?;
     
-    let mut indexer = Indexer::new(&project_name, &db_path)?;
-    let rx = spawn_senders(project_path, config);
-    for path in rx.iter().flatten() {
-        let issues = crate::commands::scan::run_rules_on_file(&path, config)?;
-        let file_id = indexer.upsert_file(&path)?;
-
-        let issue_rows: Vec<IssueRow> = issues
-          .iter()
-          .map(|d| IssueRow {
-              rule_id: d.id.as_ref(),
-              severity: match d.severity {
-                  Severity::High => "HIGH",
-                  Severity::Medium => "MEDIUM",
-                  Severity::Low => "LOW",
-              },
-              line: d.line as i64,
-              col: d.col as i64,
-          })
-          .collect();
-
-        indexer.replace_issues(file_id, issue_rows)?;
+    let pool = Indexer::init(db_path)?;
+    {
+        let idx = Indexer::from_pool(&project_name, &pool).unwrap();
+        idx.clear()?;
     }
+
+    tracing::debug!("Cleaned index for: {}", project_name);
+    
+    let rx = spawn_senders(project_path, config);
+    let paths: Vec<_> = rx.into_iter().flatten().collect();
+    
+    paths.into_par_iter().try_for_each(|path| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let issues = crate::commands::scan::run_rules_on_file(&path, config).unwrap();
+        let mut idx = Indexer::from_pool(project_name, &pool).unwrap();
+        let file_id = idx.upsert_file(&path).unwrap();
+
+        let rows: Vec<IssueRow> = issues.iter().map(|d| IssueRow {
+            rule_id: d.id.as_ref(),
+            severity: match d.severity {
+                Severity::High   => "HIGH",
+                Severity::Medium => "MEDIUM",
+                Severity::Low    => "LOW",
+            },
+            line: d.line as i64,
+            col:  d.col  as i64,
+        }).collect();
+        
+        idx.replace_issues(file_id, rows).unwrap();
+        Ok(())
+    }).unwrap();
     Ok(())
 }

@@ -1,7 +1,9 @@
 use crate::utils::project::get_project_info;
 use console::style;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use crate::database::index::{IssueRow, Indexer};
 use crate::patterns::Severity;
 use crate::utils::config::Config;
@@ -44,8 +46,8 @@ pub fn handle(
             crate::commands::index::build_index(&project_name,&scan_path, &db_path, config)?;
         }
 
-        let mut indexer = Indexer::new(&project_name, &db_path)?;
-        diags = scan_with_index(&project_name, &db_path, config, &mut indexer)?;
+        let pool = Indexer::init(&db_path)?;
+        diags = scan_with_index_parallel(&project_name, pool, config)?;
     }
 
     if format == "console" || format == "" && config.output.default_format == "console" {
@@ -95,42 +97,49 @@ fn scan_filesystem(
     Ok(acc.into_inner().unwrap())
 }
 
-fn scan_with_index(
+fn scan_with_index_parallel(
     project: &str,
-    _db_path: &Path,
+    pool: Arc<Pool<SqliteConnectionManager>>,
     cfg: &Config,
-    indexer: &mut Indexer,
 ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
-    let paths = indexer.get_files(project).unwrap_or_default();
-    let mut issues: Vec<Diag> = Vec::new();
-    for path in paths {
-        if indexer.should_scan(&path)? {
-            tracing::debug!("scanning files{}", path.display());
 
-            let mut diags = run_rules_on_file(&path, cfg)?;
-            let file_id = indexer.upsert_file(&path)?;
+    // Get the file list once (single connection, no contention)
+    let files = {
+        let idx = Indexer::from_pool(project, &pool)?;
+        idx.get_files(project)?
+    };
 
-            let issue_rows: Vec<IssueRow> = diags
-                .iter()
-                .map(|d| IssueRow {
-                    rule_id: d.id.as_ref(),
-                    severity: match d.severity {
-                        Severity::High => "HIGH",
-                        Severity::Medium => "MEDIUM",
-                        Severity::Low => "LOW",
-                    },
-                    line: d.line as i64,
-                    col: d.col as i64,
-                })
-                .collect();
+    let acc = Mutex::new(Vec::new());
 
-            indexer.replace_issues(file_id, issue_rows)?;
-            issues.append(&mut diags);
-            continue;
-        }
-        issues.append(&mut indexer.get_issues_from_file(&path)?);
-    }
-    Ok(issues)
+    files.into_par_iter()
+      .try_for_each(|path| -> Result<(), DynError> {
+          let mut idx = Indexer::from_pool(project, &pool).unwrap();
+
+          if idx.should_scan(&path).unwrap() {
+              let mut diags = run_rules_on_file(&path, cfg).unwrap();
+              let file_id   = idx.upsert_file(&path).unwrap();
+
+              let rows: Vec<IssueRow> = diags.iter().map(|d| IssueRow {
+                  rule_id: d.id.as_ref(),
+                  severity: match d.severity {
+                      Severity::High   => "HIGH",
+                      Severity::Medium => "MEDIUM",
+                      Severity::Low    => "LOW",
+                  },
+                  line: d.line as i64,
+                  col:  d.col  as i64,
+              }).collect();
+
+              idx.replace_issues(file_id, rows).unwrap();
+              acc.lock().unwrap().append(&mut diags);
+          } else {
+              let mut cached = idx.get_issues_from_file(&path).unwrap();
+              acc.lock().unwrap().append(&mut cached);
+          }
+          Ok(())
+      }).unwrap();
+
+    Ok(acc.into_inner().unwrap())
 }
 
 // --------------------------------------------------------------------------------------------
