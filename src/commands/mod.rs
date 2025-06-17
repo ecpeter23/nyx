@@ -17,7 +17,7 @@ pub fn handle_command(
             scan::handle(&path, no_index, rebuild_index, format, high_only, database_dir, config)
         }
         Commands::Index { action } => {
-            index::handle(action, database_dir)
+            index::handle(action, database_dir, config)
         }
         Commands::List { verbose } => {
             list::handle(verbose, database_dir)

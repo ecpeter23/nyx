@@ -40,7 +40,8 @@ pub fn handle(
         diags = scan_filesystem(&scan_path, config)?;
     } else {
         if rebuild_index || !db_path.exists() {
-            crate::commands::index::build_index(&scan_path, &db_path)?;
+            tracing::debug!("Scanning filesystem index filesystem");
+            crate::commands::index::build_index(&project_name,&scan_path, &db_path, config)?;
         }
         diags = scan_with_index(&project_name, &db_path, config, &mut indexer)?;
     }
@@ -90,12 +91,12 @@ fn scan_with_index(
     cfg: &Config,
     indexer: &mut Indexer,
 ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
-    let files = indexer.get_files(project).unwrap_or_default();
+    let paths = indexer.get_files(project).unwrap_or_default();
     let mut issues: Vec<Diag> = Vec::new();
-    for file in files {
-        if indexer.should_scan(&file)? {
-            let mut diags = run_rules_on_file(&file, cfg)?;
-            let file_id = indexer.upsert_file(&file)?;
+    for path in paths {
+        if indexer.should_scan(&path)? {
+            let mut diags = run_rules_on_file(&path, cfg)?;
+            let file_id = indexer.upsert_file(&path)?;
 
             let issue_rows: Vec<IssueRow> = diags
                 .iter()
@@ -115,7 +116,7 @@ fn scan_with_index(
             issues.append(&mut diags);
             continue;
         }
-        issues.append(&mut indexer.get_issues_from_file(&file)?);
+        issues.append(&mut indexer.get_issues_from_file(&path)?);
     }
     Ok(issues)
 }
@@ -123,7 +124,7 @@ fn scan_with_index(
 // --------------------------------------------------------------------------------------------
 // Tree‑sitter‑based rule runner – returns a Vec<Diag>
 // --------------------------------------------------------------------------------------------
-fn run_rules_on_file(
+pub(crate) fn run_rules_on_file(
     path: &Path,
     cfg: &Config,
 ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
