@@ -129,7 +129,8 @@ pub(crate) fn run_rules_on_file(
     path: &Path,
     cfg: &Config,
 ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
-    let source = std::fs::read_to_string(path)?;
+    let bytes = std::fs::read(path)?;
+
     let mut parser = Parser::new();
 
     let lang_key = match path
@@ -153,7 +154,7 @@ pub(crate) fn run_rules_on_file(
     let (ts_lang, lang_name) = lang_key;
 
     parser.set_language(&ts_lang)?;
-    let tree = parser.parse(&source, None).ok_or("tree‑sitter failed")?;
+    let tree = parser.parse(&*bytes, None).ok_or("tree‑sitter failed")?;
     let root = tree.root_node();
 
     let compiled = query_cache::for_lang(lang_name, ts_lang);
@@ -164,7 +165,7 @@ pub(crate) fn run_rules_on_file(
         if cfg.scanner.min_severity > cq.meta.severity {
             continue;
         }
-        let mut matches = cursor.matches(&cq.query, root, source.as_bytes());
+        let mut matches = cursor.matches(&cq.query, root, &*bytes);
         while let Some(m) = matches.next() {
             for cap in m.captures.iter().filter(|c| c.index == 0) {
                 let point = cap.node.start_position();
