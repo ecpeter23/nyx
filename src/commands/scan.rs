@@ -139,6 +139,11 @@ fn scan_with_index_parallel(
           Ok(())
       }).unwrap();
 
+    {
+        let idx = Indexer::from_pool(project, &pool)?;
+        idx.vacuum()?;
+    }
+
     Ok(acc.into_inner().unwrap())
 }
 

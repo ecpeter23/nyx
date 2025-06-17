@@ -81,5 +81,11 @@ pub fn build_index(
         idx.replace_issues(file_id, rows).unwrap();
         Ok(())
     }).unwrap();
+    
+    {
+        let idx = Indexer::from_pool(&project_name, &pool)?;
+        idx.vacuum()?;
+    }
+    
     Ok(())
 }

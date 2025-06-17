@@ -211,8 +211,13 @@ pub mod index {
         VACUUM;
         "#,
       )?;
-      
+
       self.c().execute_batch(SCHEMA)?;
+      Ok(())
+    }
+    
+    pub fn vacuum(&self) -> rusqlite::Result<()> {
+      self.c().execute("VACUUM;", [])?;
       Ok(())
     }
 
