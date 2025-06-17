@@ -1,14 +1,17 @@
 use crate::utils::project::get_project_info;
 use console::style;
 use std::path::Path;
-
+use std::sync::Mutex;
 use crate::database::index::{IssueRow, Indexer};
 use crate::patterns::Severity;
 use crate::utils::config::Config;
 use crate::utils::query_cache;
 use crate::walk::spawn_senders;
+use rayon::prelude::*;
 
 use tree_sitter::{Language, Parser, QueryCursor, StreamingIterator};
+
+type DynError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug)]
 pub struct Diag {
@@ -34,7 +37,7 @@ pub fn handle(
     let diags: Vec<Diag>;
     
     if no_index {
-        diags = scan_filesystem(&scan_path, config)?;
+        diags = scan_filesystem(&scan_path, config).unwrap();
     } else {
         if rebuild_index || !db_path.exists() {
             tracing::debug!("Scanning filesystem index filesystem");
@@ -75,13 +78,21 @@ pub fn handle(
 fn scan_filesystem(
     root: &Path,
     cfg: &Config,
-) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
+) ->Result<Vec<Diag>, Box<dyn std::error::Error + Send + Sync>> {
     let rx = spawn_senders(root, cfg);
-    let mut issues: Vec<Diag> = Vec::new();
-    for batch in rx.iter().flatten() {
-        issues.append(&mut run_rules_on_file(&batch, cfg)?);
-    }
-    Ok(issues)
+    let acc = Mutex::new(Vec::new());
+
+    rx.into_iter()
+      .flatten()
+      .par_bridge()                       // rayon hand-off
+      .try_for_each(|path| {              // stable API
+          let mut local = run_rules_on_file(&path, cfg).unwrap();   // <- same as before
+          let mut guard = acc.lock().unwrap();
+          guard.append(&mut local);
+          Ok::<(), DynError>(())          // explicit error type
+      })?;                                // propagate first error, if any
+
+    Ok(acc.into_inner().unwrap())
 }
 
 fn scan_with_index(
