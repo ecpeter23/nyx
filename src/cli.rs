@@ -26,8 +26,8 @@ pub enum Commands {
         rebuild_index: bool,
 
         /// Output format
-        #[arg(short, long, value_enum, default_value = "table")]
-        format: OutputFormat,
+        #[arg(short, long, value_enum, default_value = "")]
+        format: String,
 
         /// Show only high severity issues
         #[arg(long)]
@@ -77,12 +77,4 @@ pub enum IndexAction {
         #[arg(default_value = ".")]
         path: String,
     },
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-pub enum OutputFormat {
-    Table,
-    Json,
-    Csv,
-    Sarif,
 }

@@ -97,13 +97,13 @@ impl Default for DatabaseConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct OutputConfig {
-    /// The default output format. TODO: IMPLEMENT
+    /// The default output format. TODO: IMPLEMENT others
     pub default_format: String,
     
     /// Whether to show progress or not. TODO: IMPLEMENT
     pub show_progress: bool,
     
-    /// Whether to colorize output or not. TODO: IMPLEMENT
+    /// Whether to colorize output or not. TODO: IMPLEMENT changing to non colored
     pub color_output: bool,
     
     /// The maximum number of results to show. TODO: IMPLEMENT
@@ -113,7 +113,7 @@ pub struct OutputConfig {
 impl Default for OutputConfig {
     fn default() -> Self {
         Self {
-            default_format: "table".into(),
+            default_format: "console".into(),
             show_progress: true,
             color_output: true,
             max_results: None,

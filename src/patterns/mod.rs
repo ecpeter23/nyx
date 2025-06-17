@@ -9,6 +9,7 @@ mod php;
 mod python;
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 
@@ -32,6 +33,19 @@ pub struct Pattern {
   /// Rough severity bucket.
   pub severity: Severity,
 }
+
+impl FromStr for Severity { // TODO: FIX
+  type Err = ();
+
+  fn from_str(input: &str) -> Result<Self, Self::Err> {
+    match input.to_lowercase().as_str() {
+      "medium" => Ok(Severity::Medium),
+      "high"   => Ok(Severity::High),
+      _        => Ok(Severity::Low),
+    }
+  }
+}
+
 
 /// Global, lazily-initialised registry: lang-name → pattern slice
 static REGISTRY: Lazy<HashMap<&'static str, &'static [Pattern]>> = Lazy::new(|| {

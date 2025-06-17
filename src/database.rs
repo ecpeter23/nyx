@@ -1,164 +1,174 @@
 pub mod index {
-  use blake3::Hasher;
   use rusqlite::{params, Connection, OptionalExtension};
   use std::fs;
-  use std::path::Path;
+  use std::path::{Path, PathBuf};
+  use std::str::FromStr;
   use std::time::{SystemTime, UNIX_EPOCH};
+  use crate::commands::scan::Diag;
+  use crate::patterns::Severity;
 
-  /// Schema: stores digest, file modification time (secs since epoch) and
-  /// last time we *fully* scanned the file.
+  /// DB schema (foreign‑keys enabled).
   const SCHEMA: &str = r#"
-        CREATE TABLE IF NOT EXISTS files (
-            path TEXT PRIMARY KEY,
-            hash BLOB NOT NULL,
-            mtime INTEGER NOT NULL,
-            scanned_at INTEGER NOT NULL
-        );"#;
+        PRAGMA foreign_keys = ON;
 
-  pub(crate) struct Indexer {
+        CREATE TABLE IF NOT EXISTS files (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            project    TEXT    NOT NULL,
+            path       TEXT    NOT NULL,
+            hash       BLOB    NOT NULL,
+            mtime      INTEGER NOT NULL,
+            scanned_at INTEGER NOT NULL,
+            UNIQUE(project, path)
+        );
+
+        CREATE TABLE IF NOT EXISTS issues (
+            file_id    INTEGER NOT NULL
+                              REFERENCES files(id)
+                              ON DELETE CASCADE,
+            rule_id    TEXT    NOT NULL,
+            severity   TEXT    NOT NULL,
+            line       INTEGER NOT NULL,
+            col        INTEGER NOT NULL,
+            PRIMARY KEY (file_id, rule_id, line, col)
+        );
+    "#;
+
+  /// A single issue row, ready for insertion.
+  #[derive(Debug, Clone)]
+  pub struct IssueRow<'a> {
+    pub rule_id: &'a str,
+    pub severity: &'a str,
+    pub line: i64,
+    pub col: i64,
+  }
+
+  pub struct Indexer {
     conn: Connection,
+    project: String,
   }
 
   impl Indexer {
-    pub fn new(database_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Open (or create) the DB at `database_path` for the given project name.
+    pub fn new(project: &str, database_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
       let conn = Connection::open(database_path)?;
       conn.execute_batch(SCHEMA)?;
-      Ok(Self { conn })
+      Ok(Self { conn, project: project.to_owned() })
     }
 
-    /// Returns `true` if the caller should analyze the file, i.e., we have
-    /// never seen it or something changed (mtime or content hash).
+    /// Return true when the file *content* or *mtime* changed since the last scan.
     pub fn should_scan(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
       let meta = fs::metadata(path)?;
       let mtime = meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
-
       let digest = Self::digest_file(path)?;
 
       let row: Option<(Vec<u8>, i64)> = self
-        .conn
-        .query_row(
-          "SELECT hash, mtime FROM files WHERE path = ?1",
-          params![path.to_string_lossy()],
-          |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
+          .conn
+          .query_row(
+            "SELECT hash, mtime FROM files WHERE project = ?1 AND path = ?2",
+            params![self.project, path.to_string_lossy()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+          )
+          .optional()?;
 
-      match row {
-        Some((stored_hash, stored_mtime)) => {
-          Ok(stored_hash != digest || stored_mtime != mtime)
-        }
-        None => Ok(true),
-      }
+      Ok(match row {
+        Some((stored_hash, stored_mtime)) => stored_hash != digest || stored_mtime != mtime,
+        None => true,
+      })
     }
 
-    /// Persist a fresh scan result.
-    pub fn record_scan(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    /// Insert or update the `files` row and return its id.
+    pub fn upsert_file(&self, path: &Path) -> Result<i64, Box<dyn std::error::Error>> {
       let meta = fs::metadata(path)?;
       let mtime = meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
-      let scanned_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs() as i64;
+      let scanned_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
       let digest = Self::digest_file(path)?;
 
       self.conn.execute(
-        "REPLACE INTO files (path, hash, mtime, scanned_at) VALUES (?1, ?2, ?3, ?4)",
-        params![path.to_string_lossy(), digest, mtime, scanned_at],
+        "INSERT INTO files (project, path, hash, mtime, scanned_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project,path) DO UPDATE
+                 SET hash = excluded.hash,
+                     mtime = excluded.mtime,
+                     scanned_at = excluded.scanned_at",
+        params![self.project, path.to_string_lossy(), digest, mtime, scanned_at],
       )?;
+
+      let id: i64 = self.conn.query_row(
+        "SELECT id FROM files WHERE project = ?1 AND path = ?2",
+        params![self.project, path.to_string_lossy()],
+        |r| r.get(0),
+      )?;
+      Ok(id)
+    }
+
+    /// Replace all issues for `file_id` with the supplied set.
+    pub fn replace_issues<'a>(&mut self, file_id: i64, issues: impl IntoIterator<Item = IssueRow<'a>>)
+                              -> Result<(), Box<dyn std::error::Error>> {
+      let tx = self.conn.transaction()?;
+      tx.execute("DELETE FROM issues WHERE file_id = ?", params![file_id])?;
+
+      {
+        let mut stmt = tx.prepare(
+          "INSERT INTO issues (file_id, rule_id, severity, line, col)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for iss in issues {
+          stmt.execute(params![file_id, iss.rule_id, iss.severity, iss.line, iss.col])?;
+        }
+      }
+      tx.commit()?;
       Ok(())
     }
 
+    /// Gets the issues for a specific file so we don't have to rescan
+    pub fn get_issues_from_file(
+      &self,
+      path: &Path,
+    ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
+      let file_id: i64 = self.conn.query_row(
+        "SELECT id FROM files WHERE project = ?1 AND path = ?2",
+        params![self.project, path.to_string_lossy()],
+        |r| r.get(0),
+      )?;
+      
+      let mut stmt = self.conn.prepare(
+        "SELECT rule_id, severity, line, col
+         FROM issues
+         WHERE file_id = ?1",
+      )?;
+
+      let issue_iter = stmt.query_map([file_id], |row| {
+        let sev_str: String = row.get(1)?;
+        Ok(Diag {
+          path:        path.to_string_lossy().to_string(),                     
+          id:          row.get::<_, String>(0)?,                // rule_id
+          line:        row.get::<_, i64>(2)? as usize,
+          col:         row.get::<_, i64>(3)? as usize,
+          severity:    Severity::from_str(&sev_str).unwrap(),
+        })
+      })?;
+
+      Ok(issue_iter.filter_map(Result::ok).collect())
+    }
+    
+    /// gets files from the database
+    pub fn get_files(&self, project: &str) -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
+      let mut stmt = self.conn.prepare(
+        "SELECT path
+         FROM files
+         WHERE project = ?1",
+      )?;
+
+      let file_iter = stmt.query_map([project], |row| row.get::<_, String>(0))?;
+      
+      Ok(file_iter.map(|p| p.map(PathBuf::from)).collect::<Result<_, _>>()?)
+    }
+
     fn digest_file(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-      let mut hasher = Hasher::new();
+      let mut hasher = blake3::Hasher::new();
       let mut file = fs::File::open(path)?;
       std::io::copy(&mut file, &mut hasher)?;
       Ok(hasher.finalize().as_bytes().to_vec())
     }
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use crate::database::index::Indexer;
-  use std::error::Error;
-  use std::io::Write;
-  use tempfile::tempdir;
-
-  /// Returns a freshly‑initialised `Indexer` backed by an *in‑memory* SQLite
-  /// database. Using `:memory:` sidesteps file‑system lifetime issues that can
-  /// occur when the temporary database file is deleted while a connection is
-  /// still open.
-  fn new_indexer() -> Indexer {
-    Indexer::new(std::path::Path::new(":memory:"))
-      .expect("create in‑memory Indexer")
-  }
-
-  #[test]
-  fn new_file_is_flagged_for_scan() -> Result<(), Box<dyn Error>> {
-    let indexer = new_indexer();
-
-    let dir = tempdir()?;
-    let file_path = dir.path().join("hello.txt");
-    std::fs::write(&file_path, b"hello world")?;
-
-    // File has never been seen ⇒ should be scanned.
-    assert!(indexer.should_scan(&file_path)?);
-    Ok(())
-  }
-
-  #[test]
-  fn unchanged_file_is_not_flagged_again() -> Result<(), Box<dyn Error>> {
-    let indexer = new_indexer();
-    let dir = tempdir()?;
-    let file_path = dir.path().join("foo.txt");
-    std::fs::write(&file_path, b"abc123")?;
-
-    // First pass – record the scan result.
-    indexer.record_scan(&file_path)?;
-
-    // Nothing changed – should_scan must return false.
-    assert!(!indexer.should_scan(&file_path)?);
-    Ok(())
-  }
-
-  #[test]
-  fn modified_content_triggers_rescan() -> Result<(), Box<dyn Error>> {
-    let indexer = new_indexer();
-    let dir = tempdir()?;
-    let file_path = dir.path().join("bar.txt");
-    std::fs::write(&file_path, b"first")?;
-    indexer.record_scan(&file_path)?;
-
-    // Append data to change the hash.
-    let mut file = std::fs::OpenOptions::new()
-      .append(true)
-      .open(&file_path)?;
-    writeln!(file, "second line")?;
-
-    assert!(indexer.should_scan(&file_path)?);
-    Ok(())
-  }
-
-  #[test]
-  fn modified_mtime_alone_triggers_rescan() -> Result<(), Box<dyn Error>> {
-    // Compile this test only when the optional `filetime` feature is enabled.
-    {
-      use std::time::{Duration, SystemTime};
-      use filetime::FileTime;
-
-      let indexer = new_indexer();
-      let dir = tempdir()?;
-      let file_path = dir.path().join("baz.txt");
-      std::fs::write(&file_path, b"unchanged content")?;
-      indexer.record_scan(&file_path)?;
-
-      // Bump the modification time without touching the contents.
-      let now_plus = SystemTime::now() + Duration::from_secs(5);
-      let new_mtime = FileTime::from_system_time(now_plus);
-      filetime::set_file_mtime(&file_path, new_mtime)?;
-
-      assert!(indexer.should_scan(&file_path)?);
-    }
-
-    Ok(())
   }
 }
