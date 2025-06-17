@@ -43,11 +43,15 @@ pub fn spawn_senders(
     let mut ob = OverrideBuilder::new(root);
 
     for ext in &cfg.scanner.excluded_extensions {
-        ob.add(&format!("!*.{ext}")).unwrap();           
+        if let Err(e) = ob.add(&format!("!*.{ext}")) {
+            tracing::warn!("could not add ignore pattern: {e}");
+        }
     }
 
     for dir in &cfg.scanner.excluded_directories {
-        ob.add(&format!("!**/{dir}/**")).unwrap();
+        if let Err(e) = ob.add(&format!("!**/{dir}/**")) {
+            tracing::warn!("could not add ignore pattern: {e}");
+        }
     }
     
     let overrides = ob.build().unwrap();

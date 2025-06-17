@@ -43,6 +43,5 @@ pub fn build_index(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Implement actual index building
     fs::File::create(db_path)?;
-    println!("Index building logic goes here...");
     Ok(())
 }
