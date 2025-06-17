@@ -31,9 +31,6 @@ pub fn handle(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scan_path = Path::new(path).canonicalize()?;
     let (project_name, db_path) = get_project_info(&scan_path, database_dir)?;
-
-    let mut indexer = Indexer::new(&project_name, &db_path)?;
-
     let diags: Vec<Diag>;
     
     if no_index {
@@ -43,6 +40,8 @@ pub fn handle(
             tracing::debug!("Scanning filesystem index filesystem");
             crate::commands::index::build_index(&project_name,&scan_path, &db_path, config)?;
         }
+
+        let mut indexer = Indexer::new(&project_name, &db_path)?;
         diags = scan_with_index(&project_name, &db_path, config, &mut indexer)?;
     }
 
@@ -95,6 +94,8 @@ fn scan_with_index(
     let mut issues: Vec<Diag> = Vec::new();
     for path in paths {
         if indexer.should_scan(&path)? {
+            tracing::debug!("scanning files{}", path.display());
+
             let mut diags = run_rules_on_file(&path, cfg)?;
             let file_id = indexer.upsert_file(&path)?;
 

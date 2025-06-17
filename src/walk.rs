@@ -8,6 +8,7 @@ const BATCH_SIZE: usize = 5;
 
 type Batch = Vec<PathBuf>;
 
+#[derive(Debug)]
 struct Batcher {
     tx: crossbeam_channel::Sender<Batch>,
     batch: Batch,
@@ -82,6 +83,7 @@ pub fn spawn_senders(
                 match entry {
                     Ok(e) if e.file_type().is_some_and(|ft| ft.is_file()) => {
                         b.push(e.into_path());
+                        tracing::debug!("scanning file: {:?}", b);
                         if batch.len() == BATCH_SIZE {
                             let _ = tx.send(std::mem::take(&mut batch));
                         }
