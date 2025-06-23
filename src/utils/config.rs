@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path};
 use std::fs;
+use console::style;
 use toml;
 use crate::patterns::Severity;
 
@@ -187,10 +188,15 @@ impl Config {
             let user_config: Config = toml::from_str(&user_config_content)?;
 
             config = merge_configs(config, user_config);
-
-            println!("Loaded user config from: {}", user_config_path.display());
+            
+            println!("{}: Loaded user config from: {}\n",
+                     style("note").green().bold(),
+                     style(user_config_path.display()).underlined().white().bold());
         } else {
-            println!("Using default configuration. Create {} to customize.", user_config_path.display());
+            println!("{}: Using {} configuration.\n      Create file in '{}'to customize.\n",
+                     style("note").green().bold(),
+                     style("default").bold(),
+                     style(user_config_path.display()).underlined().white().bold());
         }
 
         Ok(config)

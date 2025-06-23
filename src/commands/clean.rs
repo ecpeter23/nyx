@@ -1,4 +1,5 @@
 use std::{env, fs};
+use console::style;
 use crate::utils::get_project_info;
 
 pub fn handle(
@@ -7,19 +8,19 @@ pub fn handle(
     config_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if all {
-        println!("Cleaning all indexes...");
+        println!("{}", style("Cleaning all indexes...").cyan().bold());
         if config_dir.exists() {
             fs::remove_dir_all(config_dir)?;
             fs::create_dir_all(config_dir)?;
         }
-        println!("All indexes cleaned.");
+        println!("{}", style("✔ All indexes cleaned").green().bold());
     } else if let Some(proj_name) = project {
         let db_path = config_dir.join(format!("{}.sqlite", proj_name));
         if db_path.exists() {
             fs::remove_file(&db_path)?;
-            println!("Cleaned index for: {}", proj_name);
+            println!("{} {}", style("✔ Cleaned index for").green(), style(&proj_name).white().bold());
         } else {
-            println!("No index found for: {}", proj_name);
+            println!("{} {}", style("✖ No index found for").red(), style(&proj_name).white().bold());
         }
     } else {
         let current_dir = env::current_dir()?;
@@ -27,11 +28,11 @@ pub fn handle(
 
         if db_path.exists() {
             fs::remove_file(&db_path)?;
-            println!("Cleaned index for: {}", project_name);
+            println!("{} {}", style("✔ Cleaned index for").green(), style(&project_name).white().bold());
         } else {
-            println!("No index found for current project: {}", project_name);
+            println!("{} {}", style("✖ No index found for current project").red(), style(&project_name).white().bold());
         }
     }
 
-    Ok(())
+    std::process::exit(0);
 }

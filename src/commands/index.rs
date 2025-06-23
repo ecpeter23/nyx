@@ -1,4 +1,8 @@
 use std::fs;
+use std::process::exit;
+use bytesize::ByteSize;
+use chrono::{DateTime, Local};
+use console::style;
 use crate::cli::IndexAction;
 use crate::database::index::{Indexer, IssueRow};
 use crate::patterns::Severity;
@@ -19,24 +23,29 @@ pub fn handle(
 
             if force || !db_path.exists() {
                 build_index(&project_name, &build_path, &db_path, config)?;
-                println!("Index built: {}", db_path.display());
+                println!("{} {} {}", "✔", style("Index built:" ).green(), style(db_path.display()).white().bold());
             } else {
-                println!("Index already exists. Use --force to rebuild.");
+                println!("{} {}", style("↩ Index already exists").yellow(), style("(use --force to rebuild)").dim());
             }
         }
         IndexAction::Status { path } => {
             let status_path = std::path::Path::new(&path).canonicalize()?;
             let (project_name, db_path) = get_project_info(&status_path, database_dir)?;
 
-            println!("Project: {}", project_name);
-            println!("Index path: {}", db_path.display());
-            println!("Index exists: {}", db_path.exists());
+            println!("{}", style("Project status").blue().bold().underlined());
+            println!("  {:14} {}", style("Project"),    style(&project_name).white().bold());
+            println!("  {:14} {}", style("Index path"), style(db_path.display()).underlined());
+            println!("  {:14} {}", style("Exists"),     style(db_path.exists()).bold());
 
             if db_path.exists() {
-                let metadata = fs::metadata(&db_path)?;
-                println!("Index size: {} bytes", metadata.len());
-                println!("Last modified: {:?}", metadata.modified()?);
+                let meta = fs::metadata(&db_path)?;
+                let size = ByteSize::b(meta.len());
+                let mtime: DateTime<Local> = meta.modified()?.into();
+                println!("  {:14} {}", style("Size"),      size);
+                println!("  {:14} {}", style("Modified"),  mtime.format("%Y-%m-%d %H:%M:%S"));
             }
+            
+            exit(0);
         }
     }
     Ok(())
