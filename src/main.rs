@@ -10,7 +10,8 @@ use cli::Cli;
 use clap::Parser;
 use directories::ProjectDirs;
 use std::fs;
-
+use std::time::Instant;
+use console::style;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::fmt::time;
@@ -39,6 +40,7 @@ fn init_tracing() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let now = Instant::now();
     init_tracing();
 
     tracing::debug!("CLI starting up");
@@ -57,6 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     commands::handle_command(cli.command, database_dir, &mut config)?;
 
+    let elapsed = now.elapsed().as_millis();
+    println!("{} in {} ms.",
+             style("Finished").green().bold(),
+             style(elapsed).white().bold());
     Ok(())
 }
 

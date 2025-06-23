@@ -10,7 +10,7 @@ use crate::utils::config::Config;
 use crate::utils::query_cache;
 use crate::walk::spawn_senders;
 use rayon::prelude::*;
-
+use std::collections::BTreeMap;
 use tree_sitter::{Language, Parser, QueryCursor, StreamingIterator};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -37,7 +37,7 @@ pub fn handle(
     let (project_name, db_path) = get_project_info(&scan_path, database_dir)?;
     
     let diags: Vec<Diag> = if no_index {
-        scan_filesystem(&scan_path, config).unwrap()
+        scan_filesystem(&scan_path, config)?
     } else {
         if rebuild_index || !db_path.exists() {
             tracing::debug!("Scanning filesystem index filesystem");
@@ -49,24 +49,37 @@ pub fn handle(
     };
 
     tracing::debug!("Found {:?} issues.", diags.len());
-    
-    if format == "console" || (format.is_empty() && config.output.default_format == "console") {
+
+    if format == "console"
+      || (format.is_empty() && config.output.default_format == "console")
+    {
         tracing::debug!("Printing to console");
+        let mut grouped: BTreeMap<&str, Vec<&Diag>> = BTreeMap::new();
         for d in &diags {
-            let sev_str = match d.severity {
-                Severity::High => style("HIGH").red().bold(),
-                Severity::Medium => style("MEDIUM").yellow().bold(),
-                Severity::Low => style("LOW").cyan().bold(),
-            };
-            println!(
-                "{}:{}:{}  [{}]  {}",
-                style(d.path.clone()).blue().underlined(),
-                d.line,
-                d.col,
-                sev_str,
-                style(&d.id).bold(),
-            );
+            grouped.entry(&d.path).or_default().push(d);
         }
+        
+        for (path, issues) in grouped {
+            println!("{}", style(path).blue().underlined());
+            for d in issues {
+                let sev_str = match d.severity {
+                    Severity::High   => style("HIGH").red().bold(),
+                    Severity::Medium => style("MEDIUM").yellow().bold(),
+                    Severity::Low    => style("LOW").cyan().bold(),
+                };
+                println!(
+                    "  {:>4}:{:<4}  [{}]  {}",
+                    d.line, d.col, sev_str, style(&d.id).bold()
+                );
+            }
+            println!();  
+        }
+
+        println!("{} '{}' generated {} issues.", 
+                 style("warning").yellow().bold(), 
+                 style(project_name).white().bold(),
+                style(diags.len()).bold());
+        println!("\t"); // TODO: Add individual counts for different warning levels
     }
     Ok(())
 }
@@ -78,21 +91,20 @@ pub fn handle(
 fn scan_filesystem(
     root: &Path,
     cfg: &Config,
-) ->Result<Vec<Diag>, Box<dyn std::error::Error + Send + Sync>> {
+) ->Result<Vec<Diag>, Box<dyn std::error::Error>> {
     let rx = spawn_senders(root, cfg);
     let acc = Mutex::new(Vec::new());
-
+    
     rx.into_iter()
       .flatten()
       .par_bridge()        
       .try_for_each(|path| {          
           let mut local = run_rules_on_file(&path, cfg).unwrap();  
-          let mut guard = acc.lock().unwrap();
-          guard.append(&mut local);
+          acc.lock().unwrap().append(&mut local);
           Ok::<(), DynError>(())        
-      })?;
+      }).unwrap();
     
-    Ok(acc.into_inner().unwrap())
+    Ok(acc.into_inner()?)
 }
 
 fn scan_with_index_parallel(

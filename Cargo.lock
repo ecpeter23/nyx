@@ -514,6 +514,7 @@ dependencies = [
  "rayon",
  "rusqlite",
  "serde",
+ "thiserror",
  "toml",
  "tracing",
  "tracing-subscriber",

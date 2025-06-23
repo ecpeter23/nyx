@@ -72,13 +72,13 @@ pub fn spawn_senders(
           .threads(worker_thrs)
           .overrides(overrides)
           .build_parallel();
-         
+
         walker.run(move || {
             let mut batcher = Batcher {
                 tx: tx.clone(),
                 batch: Vec::with_capacity(BATCH_SIZE),
             };
-        
+
             Box::new(move |entry| {
                 tracing::debug!("walking: {:?}", entry);
                 let e = match entry {
