@@ -268,6 +268,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "dashmap"
+version = "7.0.0-rc2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a1e35a65fe0538a60167f0ada6e195ad5d477f6ddae273943596d4a1a5730b"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "equivalent",
+ "hashbrown",
+ "lock_api",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "deranged"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -579,6 +593,7 @@ dependencies = [
  "clap",
  "console",
  "crossbeam-channel",
+ "dashmap",
  "directories",
  "ignore",
  "num_cpus",
@@ -588,6 +603,7 @@ dependencies = [
  "rayon",
  "rusqlite",
  "serde",
+ "thiserror",
  "toml",
  "tracing",
  "tracing-subscriber",

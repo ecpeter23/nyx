@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use once_cell::sync::Lazy;
 use tree_sitter::{Language, Query};
@@ -8,30 +8,36 @@ use crate::patterns::{self, Pattern};
 
 #[derive(Clone)]
 pub struct CompiledQuery {
-  pub meta: Pattern,
-  pub query: Arc<Query>,         
+  pub meta:  Pattern,
+  pub query: std::sync::Arc<Query>,
 }
 
-static CACHE: Lazy<RwLock<HashMap<&'static str, Vec<CompiledQuery>>>> =
+static CACHE: Lazy<RwLock<HashMap<&'static str, std::sync::Arc<Vec<CompiledQuery>>>>> =
   Lazy::new(|| RwLock::new(HashMap::new()));
 
-pub fn for_lang(lang: &'static str, ts_lang: Language) -> Vec<CompiledQuery> {
-  // fast-path read
+/// Return **one shared Arc** to the per-language query set.
+/// Cloning the `Arc` is O(1) and the underlying Vec lives for the
+/// lifetime of the process.
+pub fn for_lang(lang: &'static str, ts_lang: Language) -> std::sync::Arc<Vec<CompiledQuery>> {
+  // fast path
   if let Some(v) = CACHE.read().unwrap().get(lang) {
     return v.clone();
   }
 
-  // compile under write-lock exactly once
-  let patterns = patterns::load(lang);
-  let mut vec = Vec::with_capacity(patterns.len());
-
-  for p in patterns {
+  // slow path — compile
+  let patterns  = patterns::load(lang);
+  let compiled: Vec<_> = patterns.into_iter().filter_map(|p| {
     match Query::new(&ts_lang, p.query) {
-      Ok(q) => vec.push(CompiledQuery { meta: p, query: Arc::new(q) }),
-      Err(e) => tracing::warn!(lang, id = p.id, "query compile error: {e}"),
+      Ok(q) => Some(CompiledQuery { meta: p, query: std::sync::Arc::new(q) }),
+      Err(e)=> {
+        tracing::warn!(lang, id = p.id, "query compile error: {e}");
+        None
+      }
     }
-  }
+  }).collect();
 
-  CACHE.write().unwrap().insert(lang, vec.clone());
-  vec
+  let compiled = std::sync::Arc::new(compiled);
+  
+  let mut w = CACHE.write().unwrap();
+  w.entry(lang).or_insert_with(|| compiled.clone()).clone()
 }

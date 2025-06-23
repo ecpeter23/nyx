@@ -24,8 +24,10 @@ pub fn handle(
             if force || !db_path.exists() {
                 build_index(&project_name, &build_path, &db_path, config)?;
                 println!("✔ {} {}", style("Index built:" ).green(), style(db_path.display()).white().bold());
+                exit(0);
             } else {
                 println!("{} {}", style("↩ Index already exists").yellow(), style("(use --force to rebuild)").dim());
+                exit(0);
             }
         }
         IndexAction::Status { path } => {
@@ -48,7 +50,6 @@ pub fn handle(
             exit(0);
         }
     }
-    Ok(())
 }
 
 pub fn build_index(

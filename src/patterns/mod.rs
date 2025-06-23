@@ -9,17 +9,62 @@ mod php;
 mod python;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::str::FromStr;
+use console::style;
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 
-/// How bad / noisy a pattern is considered.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, PartialOrd)]
-pub enum Severity {
-  Low,
-  Medium,
-  High,
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub enum Severity { High, Medium, Low }
+
+impl fmt::Display for Severity {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let s = match *self {
+      Severity::High   => style("HIGH").red().bold().to_string(),
+      Severity::Medium => style("MEDIUM").yellow().bold().to_string(),
+      Severity::Low    => style("LOW").cyan().bold().to_string(),
+    };
+    f.write_str(&s)
+  }
 }
+
+impl Severity {
+  /// Textual value stored in SQLite.
+  pub fn as_db_str(self) -> &'static str {
+    match self {
+      Severity::High   => "HIGH",
+      Severity::Medium => "MEDIUM",
+      Severity::Low    => "LOW",
+    }
+  }
+}
+
+impl FromStr for Severity { // TODO: FIX
+  type Err = ();
+
+  fn from_str(input: &str) -> Result<Self, Self::Err> {
+    match input.to_lowercase().as_str() {
+      "medium" => Ok(Severity::Medium),
+      "high"   => Ok(Severity::High),
+      _        => Ok(Severity::Low),
+    }
+  }
+}
+
+// /// How bad / noisy a pattern is considered.
+// #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, PartialOrd)]
+// pub enum Severity {
+//   Low,
+//   Medium,
+//   High,
+// }
+// 
+// impl Severity {
+//   pub(crate) fn as_db_str(&self) -> &str {
+//     todo!()
+//   }
+// }
 
 /// One AST pattern with a tree-sitter query and meta-data.
 #[derive(Debug, Clone, Serialize)]
@@ -34,17 +79,6 @@ pub struct Pattern {
   pub severity: Severity,
 }
 
-impl FromStr for Severity { // TODO: FIX
-  type Err = ();
-
-  fn from_str(input: &str) -> Result<Self, Self::Err> {
-    match input.to_lowercase().as_str() {
-      "medium" => Ok(Severity::Medium),
-      "high"   => Ok(Severity::High),
-      _        => Ok(Severity::Low),
-    }
-  }
-}
 
 
 /// Global, lazily-initialised registry: lang-name → pattern slice

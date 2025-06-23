@@ -7,11 +7,12 @@ use r2d2_sqlite::SqliteConnectionManager;
 use crate::database::index::{IssueRow, Indexer};
 use crate::patterns::Severity;
 use crate::utils::config::Config;
-use crate::utils::query_cache;
 use crate::walk::spawn_senders;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
-use tree_sitter::{Language, Parser, QueryCursor, StreamingIterator};
+use dashmap::DashMap;
+use crate::errors::NyxResult;
+pub(crate) use crate::file::run_rules_on_file;
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -35,6 +36,8 @@ pub fn handle(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scan_path = Path::new(path).canonicalize()?;
     let (project_name, db_path) = get_project_info(&scan_path, database_dir)?;
+
+    println!("{} {}...\n", style("Checking").green().bold(), &project_name);
     
     let diags: Vec<Diag> = if no_index {
         scan_filesystem(&scan_path, config)?
@@ -58,25 +61,18 @@ pub fn handle(
         for d in &diags {
             grouped.entry(&d.path).or_default().push(d);
         }
-        
-        for (path, issues) in grouped {
+
+        for (path, issues) in &grouped {
             println!("{}", style(path).blue().underlined());
             for d in issues {
-                let sev_str = match d.severity {
-                    Severity::High   => style("HIGH").red().bold(),
-                    Severity::Medium => style("MEDIUM").yellow().bold(),
-                    Severity::Low    => style("LOW").cyan().bold(),
-                };
-                println!(
-                    "  {:>4}:{:<4}  [{}]  {}",
-                    d.line, d.col, sev_str, style(&d.id).bold()
-                );
+                println!("  {:>4}:{:<4}  [{}]  {}",
+                         d.line, d.col, d.severity, style(&d.id).bold());
             }
-            println!();  
+            println!();
         }
 
-        println!("{} '{}' generated {} issues.", 
-                 style("warning").yellow().bold(), 
+        println!("{} '{}' generated {} issues.",
+                 style("warning").yellow().bold(),
                  style(project_name).white().bold(),
                 style(diags.len()).bold());
         println!("\t"); // TODO: Add individual counts for different warning levels
@@ -94,11 +90,11 @@ fn scan_filesystem(
 ) ->Result<Vec<Diag>, Box<dyn std::error::Error>> {
     let rx = spawn_senders(root, cfg);
     let acc = Mutex::new(Vec::new());
-    
+
     rx.into_iter()
       .flatten()
       .par_bridge()        
-      .try_for_each(|path| {          
+      .try_for_each(|path| {
           let mut local = run_rules_on_file(&path, cfg).unwrap();  
           acc.lock().unwrap().append(&mut local);
           Ok::<(), DynError>(())        
@@ -107,113 +103,54 @@ fn scan_filesystem(
     Ok(acc.into_inner()?)
 }
 
-fn scan_with_index_parallel(
+pub fn scan_with_index_parallel(
     project: &str,
     pool: Arc<Pool<SqliteConnectionManager>>,
     cfg: &Config,
-) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
+) -> NyxResult<Vec<Diag>> {
+
     let files = {
         let idx = Indexer::from_pool(project, &pool)?;
         idx.get_files(project)?
     };
 
-    let acc = Mutex::new(Vec::new());
+    // ① Collect per-path Vec<Diag> without a global mutex
+    let diag_map: DashMap<String, Vec<Diag>> = DashMap::new();
 
     files.into_par_iter()
-      .try_for_each(|path| -> Result<(), DynError> {
-          let mut idx = Indexer::from_pool(project, &pool).unwrap();
+      .for_each_init(
+          // ② A single Indexer per Rayon worker thread
+          || Indexer::from_pool(project, &pool).expect("db pool"),
+          |idx, path| {
+              let needs_scan = idx.should_scan(&path).unwrap_or(true);
 
-          if idx.should_scan(&path).unwrap() {
-              let mut diags = run_rules_on_file(&path, cfg).unwrap();
-              let file_id   = idx.upsert_file(&path).unwrap();
-
-              let rows: Vec<IssueRow> = diags.iter().map(|d| IssueRow {
-                  rule_id: d.id.as_ref(),
-                  severity: match d.severity {
-                      Severity::High   => "HIGH",
-                      Severity::Medium => "MEDIUM",
-                      Severity::Low    => "LOW",
-                  },
-                  line: d.line as i64,
-                  col:  d.col  as i64,
-              }).collect();
-
-              idx.replace_issues(file_id, rows).unwrap();
-              acc.lock().unwrap().append(&mut diags);
-          } else {
-              let mut cached = idx.get_issues_from_file(&path).unwrap();
-              acc.lock().unwrap().append(&mut cached);
+              let mut diags = if needs_scan {
+                  let d = run_rules_on_file(&path, cfg).unwrap_or_default();
+                  let file_id = idx.upsert_file(&path).unwrap();
+                  idx.replace_issues(
+                      file_id,
+                      d.iter().map(|d| IssueRow {
+                          rule_id: &d.id,
+                          severity: d.severity.as_db_str(),
+                          line: d.line as i64,
+                          col:  d.col  as i64,
+                      }),
+                  ).ok();
+                  d
+              } else {
+                  idx.get_issues_from_file(&path).unwrap_or_default()
+              };
+              if !diags.is_empty() {
+                  diag_map.entry(path.to_string_lossy().to_string())
+                    .or_default()
+                    .append(&mut diags);
+              }
           }
-          Ok(())
-      }).unwrap();
+      );
 
-    {
-        let idx = Indexer::from_pool(project, &pool)?;
-        idx.vacuum()?;
-    }
+    // Optional, heavy: only vacuum on --rebuild-index
+    // if rebuild { idx.vacuum()?; }
 
-    Ok(acc.into_inner().unwrap())
-}
-
-// --------------------------------------------------------------------------------------------
-// Tree‑sitter‑based rule runner – returns a Vec<Diag>
-// --------------------------------------------------------------------------------------------
-pub(crate) fn run_rules_on_file(
-    path: &Path,
-    cfg: &Config,
-) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
-    tracing::debug!("Running rules on {}", path.to_string_lossy());
-    let bytes = std::fs::read(path)?;
-
-    let mut parser = Parser::new();
-
-    let lang_key = match path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "rs" => (Language::from(tree_sitter_rust::LANGUAGE), "rust"),
-        "c" => (Language::from(tree_sitter_c::LANGUAGE), "c"),
-        "cpp" | "c++" => (Language::from(tree_sitter_cpp::LANGUAGE), "cpp"),
-        "java" => (Language::from(tree_sitter_java::LANGUAGE), "java"),
-        "go" => (Language::from(tree_sitter_go::LANGUAGE), "go"),
-        "php" => (Language::from(tree_sitter_php::LANGUAGE_PHP), "php"),
-        "py" => (Language::from(tree_sitter_python::LANGUAGE), "python"),
-        "ts" | "tsx" => (Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT), "typescript"),
-        "js" => (Language::from(tree_sitter_javascript::LANGUAGE), "javascript"),
-        _ => return Ok(Vec::new()),
-    };
-    let (ts_lang, lang_name) = lang_key;
-
-    parser.set_language(&ts_lang)?;
-    let tree = parser.parse(&*bytes, None).ok_or("tree‑sitter failed")?;
-    let root = tree.root_node();
-
-    let compiled = query_cache::for_lang(lang_name, ts_lang);
-    let mut cursor = QueryCursor::new();
-    let mut out = Vec::new();
-
-    for cq in &compiled {
-        if cfg.scanner.min_severity > cq.meta.severity {
-            tracing::debug!("Skipping rule {} because it's below the minimum severity", cq.meta.id);
-            continue;
-        }
-        let mut matches = cursor.matches(&cq.query, root, &*bytes);
-        while let Some(m) = matches.next() {
-            for cap in m.captures.iter().filter(|c| c.index == 0) {
-                let point = cap.node.start_position();
-                tracing::debug!("Found match for rule {}", cq.meta.id);
-                out.push(Diag {
-                    path: path.to_string_lossy().to_string(),
-                    line: point.row + 1,
-                    col: point.column + 1,
-                    severity: cq.meta.severity,
-                    id: String::from(cq.meta.id),
-                });
-            }
-        }
-    }
-    Ok(out)
+    // Flatten
+    Ok(diag_map.into_iter().flat_map(|(_, v)| v).collect())
 }

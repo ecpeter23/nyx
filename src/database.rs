@@ -10,6 +10,7 @@ pub mod index {
   use std::ops::Deref;
   use std::sync::Arc;
   use r2d2::{Pool, PooledConnection};
+  use crate::errors::NyxResult;
 
   /// DB schema (foreign‑keys enabled).
   const SCHEMA: &str = r#"
@@ -55,7 +56,7 @@ pub mod index {
 
     pub fn init(
       database_path: &Path,
-    ) -> Result<std::sync::Arc<Pool<SqliteConnectionManager>>, Box<dyn std::error::Error>> {
+    ) -> NyxResult<Arc<Pool<SqliteConnectionManager>>> {
       let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
@@ -73,7 +74,7 @@ pub mod index {
     pub fn from_pool(
       project: &str,
       pool: &Pool<SqliteConnectionManager>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> NyxResult<Self> {
       let conn = pool.get()?;
       Ok(Self { conn, project: project.to_owned() })
     }
@@ -82,7 +83,7 @@ pub mod index {
     fn c(&self) -> &Connection { self.conn.deref() }
 
     /// Return true when the file *content* or *mtime* changed since the last scan.
-    pub fn should_scan(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn should_scan(&self, path: &Path) -> NyxResult<bool> {
       let meta = fs::metadata(path)?;
       let mtime = meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
       let digest = Self::digest_file(path)?;
@@ -103,7 +104,7 @@ pub mod index {
     }
 
     /// Insert or update the `files` row and return its id.
-    pub fn upsert_file(&self, path: &Path) -> Result<i64, Box<dyn std::error::Error>> {
+    pub fn upsert_file(&self, path: &Path) -> NyxResult<i64> {
       let meta = fs::metadata(path)?;
       let mtime = meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
       let scanned_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
@@ -129,7 +130,7 @@ pub mod index {
 
     /// Replace all issues for `file_id` with the supplied set.
     pub fn replace_issues<'a>(&mut self, file_id: i64, issues: impl IntoIterator<Item = IssueRow<'a>>)
-                              -> Result<(), Box<dyn std::error::Error>> {
+      -> NyxResult<()> {
       let tx = self.conn.transaction()?;
       tx.execute("DELETE FROM issues WHERE file_id = ?", params![file_id])?;
 
@@ -150,7 +151,7 @@ pub mod index {
     pub fn get_issues_from_file(
       &self,
       path: &Path,
-    ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
+    ) -> NyxResult<Vec<Diag>> {
       let file_id: i64 = self.c().query_row(
         "SELECT id FROM files WHERE project = ?1 AND path = ?2",
         params![self.project, path.to_string_lossy()],
@@ -178,7 +179,7 @@ pub mod index {
     }
     
     /// gets files from the database
-    pub fn get_files(&self, project: &str) -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
+    pub fn get_files(&self, project: &str) -> NyxResult<Vec<PathBuf>> {
       let mut stmt = self.c().prepare(
         "SELECT path
          FROM files
@@ -190,8 +191,10 @@ pub mod index {
       Ok(file_iter.map(|p| p.map(PathBuf::from)).collect::<Result<_, _>>()?)
     }
 
-    /// Clears the tables to prep for a reindex
-    pub fn clear(&self) -> rusqlite::Result<()> {
+    // -------------------------------------------------------------------------
+    // Maintenance utilities
+    // -------------------------------------------------------------------------
+    pub fn clear(&self) -> NyxResult<()> {
       self.c().execute_batch(
         r#"
         PRAGMA foreign_keys = OFF;
@@ -208,12 +211,15 @@ pub mod index {
       Ok(())
     }
     
-    pub fn vacuum(&self) -> rusqlite::Result<()> {
+    pub fn vacuum(&self) -> NyxResult<()> {
       self.c().execute("VACUUM;", [])?;
       Ok(())
     }
 
-    fn digest_file(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+    fn digest_file(path: &Path) -> NyxResult<Vec<u8>> {
       let mut hasher = blake3::Hasher::new();
       let mut file = fs::File::open(path)?;
       std::io::copy(&mut file, &mut hasher)?;

@@ -4,6 +4,8 @@ mod utils;
 mod walk;
 mod database;
 mod patterns;
+mod errors;
+mod file;
 
 use crate::utils::Config;
 use cli::Cli;
@@ -59,10 +61,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     commands::handle_command(cli.command, database_dir, &mut config)?;
 
-    let elapsed: f32 = now.elapsed().as_millis() as f32 / 1000f32;
-    println!("{} in {} s.",
-             style("Finished").green().bold(),
-             style(elapsed).white().bold());
+    println!(
+        "{} in {:.3}s.",
+        style("Finished").green().bold(),
+        now.elapsed().as_secs_f32()
+    );
     Ok(())
 }
 
