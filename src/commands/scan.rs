@@ -33,7 +33,7 @@ pub fn handle(
     format: String,
     database_dir: &Path,
     config: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> NyxResult<()> {
     let scan_path = Path::new(path).canonicalize()?;
     let (project_name, db_path) = get_project_info(&scan_path, database_dir)?;
 
@@ -87,7 +87,7 @@ pub fn handle(
 fn scan_filesystem(
     root: &Path,
     cfg: &Config,
-) ->Result<Vec<Diag>, Box<dyn std::error::Error>> {
+) -> NyxResult<Vec<Diag>> {
     let rx = spawn_senders(root, cfg);
     let acc = Mutex::new(Vec::new());
 
@@ -95,10 +95,10 @@ fn scan_filesystem(
       .flatten()
       .par_bridge()        
       .try_for_each(|path| {
-          let mut local = run_rules_on_file(&path, cfg).unwrap();  
+          let mut local = run_rules_on_file(&path, cfg)?;  
           acc.lock().unwrap().append(&mut local);
           Ok::<(), DynError>(())        
-      }).unwrap();
+      })?;
     
     Ok(acc.into_inner()?)
 }
@@ -126,7 +126,7 @@ pub fn scan_with_index_parallel(
 
               let mut diags = if needs_scan {
                   let d = run_rules_on_file(&path, cfg).unwrap_or_default();
-                  let file_id = idx.upsert_file(&path).unwrap();
+                  let file_id = idx.upsert_file(&path).unwrap_or_default();
                   idx.replace_issues(
                       file_id,
                       d.iter().map(|d| IssueRow {

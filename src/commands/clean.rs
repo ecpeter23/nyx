@@ -1,12 +1,13 @@
 use std::{env, fs};
 use console::style;
+use crate::errors::NyxResult;
 use crate::utils::get_project_info;
 
 pub fn handle(
     project: Option<String>,
     all: bool,
     config_dir: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> NyxResult<()> {
     if all {
         println!("{}", style("Cleaning all indexes...").cyan().bold());
         if config_dir.exists() {

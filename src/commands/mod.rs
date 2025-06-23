@@ -5,6 +5,7 @@ pub mod clean;
 
 use crate::cli::Commands;
 use std::path::Path;
+use crate::errors::NyxResult;
 use crate::patterns::Severity;
 use crate::utils::config::Config;
 
@@ -12,7 +13,7 @@ pub fn handle_command(
     command: Commands,
     database_dir: &Path,
     config: &mut Config
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> NyxResult<()> {
     match command {
         Commands::Scan { path, no_index, rebuild_index, format, high_only } => {
             if high_only { config.scanner.min_severity = Severity::High };

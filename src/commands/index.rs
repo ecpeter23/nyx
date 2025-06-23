@@ -10,12 +10,13 @@ use crate::utils::Config;
 use crate::utils::project::get_project_info;
 use crate::walk::spawn_senders;
 use rayon::prelude::*;
+use crate::errors::NyxResult;
 
 pub fn handle(
     action: IndexAction,
     database_dir: &std::path::Path,
     config: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> NyxResult<()> {
     match action {
         IndexAction::Build { path, force } => {
             let build_path = std::path::Path::new(&path).canonicalize()?;
@@ -57,13 +58,13 @@ pub fn build_index(
     project_path: &std::path::Path,
     db_path: &std::path::Path,
     config: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> NyxResult<()> {
     tracing::debug!("Building index for: {}", project_name);
     fs::File::create(db_path)?;
     
     let pool = Indexer::init(db_path)?;
     {
-        let idx = Indexer::from_pool(project_name, &pool).unwrap();
+        let idx = Indexer::from_pool(project_name, &pool)?;
         idx.clear()?;
     }
 
@@ -73,9 +74,9 @@ pub fn build_index(
     let paths: Vec<_> = rx.into_iter().flatten().collect();
     
     paths.into_par_iter().try_for_each(|path| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let issues = crate::commands::scan::run_rules_on_file(&path, config).unwrap();
-        let mut idx = Indexer::from_pool(project_name, &pool).unwrap();
-        let file_id = idx.upsert_file(&path).unwrap();
+        let issues = crate::commands::scan::run_rules_on_file(&path, config)?;
+        let mut idx = Indexer::from_pool(project_name, &pool)?;
+        let file_id = idx.upsert_file(&path)?;
 
         let rows: Vec<IssueRow> = issues.iter().map(|d| IssueRow {
             rule_id: d.id.as_ref(),
@@ -88,9 +89,9 @@ pub fn build_index(
             col:  d.col  as i64,
         }).collect();
         
-        idx.replace_issues(file_id, rows).unwrap();
+        idx.replace_issues(file_id, rows)?;
         Ok(())
-    }).unwrap();
+    })?;
     
     {
         let idx = Indexer::from_pool(project_name, &pool)?;

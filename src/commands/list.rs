@@ -2,11 +2,12 @@ use std::fs;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use console::style;
+use crate::errors::NyxResult;
 
 pub fn handle(
     verbose: bool,
     database_dir: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> NyxResult<()> {
     println!("{}", style("Indexed projects").blue().bold().underlined());
 
     if !database_dir.exists() {

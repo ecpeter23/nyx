@@ -73,11 +73,12 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
           .build_parallel()
           .run(move || {
               let mut b = Batcher {
-                  tx:    tx.clone(),    
+                  tx:    tx.clone(),
                   batch: Vec::with_capacity(DEFAULT_BATCH),
               };
 
               Box::new(move |entry| {
+                  tracing::debug!("walking {:?}", entry);
                   let entry = match entry {
                       Ok(e) if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) => e,
                       _ => return WalkState::Continue,
@@ -93,7 +94,8 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
                           _ => {}
                       }
                   }
-
+                  
+                  tracing::debug!("sending {:?}", entry);
                   b.push(entry.into_path());
                   WalkState::Continue
               })

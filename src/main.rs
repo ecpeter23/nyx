@@ -17,7 +17,7 @@ use console::style;
 use tracing_subscriber::{fmt, EnvFilter, Registry};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::fmt::time;
-
+use crate::errors::NyxResult;
 // use tracing_appender::rolling::{RollingFileAppender, Rotation};
 // use tracing_appender::non_blocking;
 
@@ -41,7 +41,7 @@ fn init_tracing() {
         .init();
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> NyxResult<()> {
     let now = Instant::now();
     init_tracing();
 

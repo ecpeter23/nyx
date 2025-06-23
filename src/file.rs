@@ -14,6 +14,7 @@ pub(crate) fn run_rules_on_file(
   path: &Path,
   cfg: &Config,
 ) -> NyxResult<Vec<Diag>> {
+  tracing::debug!("Running rules on: {}", path.display());
   let bytes = std::fs::read(path)?;
 
   // Fast binary-file guard (skip if >1% NULs)
@@ -21,22 +22,17 @@ pub(crate) fn run_rules_on_file(
     return Ok(vec![]);
   }
 
-  let lang_name = match lowercase_ext(path) {
-    Some(l) => l,
-    None    => return Ok(vec![]),
-  };
-
-  let ts_lang = match lang_name {
-    "rs"  => Language::from(tree_sitter_rust::LANGUAGE),
-    "c"   => Language::from(tree_sitter_c::LANGUAGE),
-    "cpp" => Language::from(tree_sitter_cpp::LANGUAGE),
-    "java"=> Language::from(tree_sitter_java::LANGUAGE),
-    "go"  => Language::from(tree_sitter_go::LANGUAGE),
-    "php" => Language::from(tree_sitter_php::LANGUAGE_PHP),
-    "py"  => Language::from(tree_sitter_python::LANGUAGE),
-    "ts"  => Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
-    "js"  => Language::from(tree_sitter_javascript::LANGUAGE),
-    _     => return Ok(vec![]),
+  let (ts_lang, lang_slug) = match lowercase_ext(path) {
+    Some("rs")  => (Language::from(tree_sitter_rust::LANGUAGE),                   "rust"),
+    Some("c")   => (Language::from(tree_sitter_c::LANGUAGE),                      "c"),
+    Some("cpp") => (Language::from(tree_sitter_cpp::LANGUAGE),                    "cpp"),
+    Some("java")=> (Language::from(tree_sitter_java::LANGUAGE),                   "java"),
+    Some("go")  => (Language::from(tree_sitter_go::LANGUAGE),                     "go"),
+    Some("php") => (Language::from(tree_sitter_php::LANGUAGE_PHP),                "php"),
+    Some("py")  => (Language::from(tree_sitter_python::LANGUAGE),                 "python"),
+    Some("ts")  => (Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),  "typescript"),
+    Some("js")  => (Language::from(tree_sitter_javascript::LANGUAGE),             "javascript"),
+    _           => return Ok(vec![]),
   };
 
   let _tree = PARSER.with(|cell| {
@@ -48,12 +44,12 @@ pub(crate) fn run_rules_on_file(
 
   let root = _tree.root_node();
 
-  let compiled = query_cache::for_lang(lang_name, ts_lang);
+  let compiled = query_cache::for_lang(lang_slug, ts_lang);
   let mut cursor = QueryCursor::new();
   let mut out = Vec::new();
 
   for cq in compiled.iter() {
-    if cfg.scanner.min_severity > cq.meta.severity {
+    if cfg.scanner.min_severity <= cq.meta.severity {
       continue;
     }
     let mut matches = cursor.matches(&cq.query, root, &*bytes);
@@ -69,6 +65,6 @@ pub(crate) fn run_rules_on_file(
         });
       }
     }
-  }
+}
   Ok(out)
 }
