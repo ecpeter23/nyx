@@ -53,7 +53,7 @@ pub fn build_index(
     
     let pool = Indexer::init(db_path)?;
     {
-        let idx = Indexer::from_pool(&project_name, &pool).unwrap();
+        let idx = Indexer::from_pool(project_name, &pool).unwrap();
         idx.clear()?;
     }
 
@@ -83,7 +83,7 @@ pub fn build_index(
     }).unwrap();
     
     {
-        let idx = Indexer::from_pool(&project_name, &pool)?;
+        let idx = Indexer::from_pool(project_name, &pool)?;
         idx.vacuum()?;
     }
     

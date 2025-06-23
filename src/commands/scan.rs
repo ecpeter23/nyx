@@ -35,10 +35,9 @@ pub fn handle(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scan_path = Path::new(path).canonicalize()?;
     let (project_name, db_path) = get_project_info(&scan_path, database_dir)?;
-    let diags: Vec<Diag>;
     
-    if no_index {
-        diags = scan_filesystem(&scan_path, config).unwrap();
+    let diags: Vec<Diag> = if no_index {
+        scan_filesystem(&scan_path, config).unwrap()
     } else {
         if rebuild_index || !db_path.exists() {
             tracing::debug!("Scanning filesystem index filesystem");
@@ -46,12 +45,12 @@ pub fn handle(
         }
 
         let pool = Indexer::init(&db_path)?;
-        diags = scan_with_index_parallel(&project_name, pool, config)?;
-    }
+        scan_with_index_parallel(&project_name, pool, config)?
+    };
 
     tracing::debug!("Found {:?} issues.", diags.len());
     
-    if format == "console" || (format == "" && config.output.default_format == "console") {
+    if format == "console" || (format.is_empty() && config.output.default_format == "console") {
         tracing::debug!("Printing to console");
         for d in &diags {
             let sev_str = match d.severity {

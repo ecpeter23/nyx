@@ -59,12 +59,12 @@ pub mod index {
       let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
-      let manager         = SqliteConnectionManager::file(&database_path).with_flags(flags);
+      let manager         = SqliteConnectionManager::file(database_path).with_flags(flags);
       let pool  = Arc::new(Pool::new(manager)?);
 
       {
         let conn = pool.get()?;
-        conn.pragma_update(None, "journal_mode", &"WAL")?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.execute_batch(SCHEMA)?;
       }
       Ok(pool)
@@ -80,14 +80,6 @@ pub mod index {
 
     // helper so code below can treat PooledConnection like &Connection
     fn c(&self) -> &Connection { self.conn.deref() }
-
-    /// Open (or create) the DB at `database_path` for the given project name.
-    // pub fn new(project: &str, database_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-    //   let conn = Connection::open(database_path)?;
-    //   conn.pragma_update(None, "journal_mode", &"WAL")?;
-    //   conn.execute_batch(SCHEMA)?;
-    //   Ok(Self { conn, project: project.to_owned() })
-    // }
 
     /// Return true when the file *content* or *mtime* changed since the last scan.
     pub fn should_scan(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
