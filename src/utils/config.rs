@@ -10,25 +10,25 @@ pub struct ScannerConfig {
     /// The minimum severity level to output
     pub min_severity: Severity,
     
-    /// The maximum file size to scan, in megabytes. TODO: IMPLEMENT
-    pub max_file_size_mb: u64,
+    /// The maximum file size to scan, in megabytes.
+    pub max_file_size_mb: Option<u64>,
     
-    /// File extensions to exclude from scanning. TODO: IMPLEMENT
+    /// File extensions to exclude from scanning.
     pub excluded_extensions: Vec<String>,
     
-    /// Directories to exclude from scanning. TODO: IMPLEMENT
+    /// Directories to exclude from scanning.
     pub excluded_directories: Vec<String>,
     
     /// Excluded files
     pub excluded_files: Vec<String>,
 
-    /// Whether to respect the global ignore file or not. TODO: IMPLEMENT
+    /// Whether to respect the global ignore file or not.
     pub read_global_ignore: bool,
 
-    /// Whether to respect VCS ignore files (`.gitignore`, ..) or not. TODO: IMPLEMENT
+    /// Whether to respect VCS ignore files (`.gitignore`, ..) or not.
     pub read_vcsignore: bool,
 
-    /// Whether to require a `.git` directory to respect gitignore files. TODO: IMPLEMENT
+    /// Whether to require a `.git` directory to respect gitignore files.
     pub require_git_to_read_vcsignore: bool,
 
     /// Whether to limit the search to starting file system or not.
@@ -37,14 +37,14 @@ pub struct ScannerConfig {
     /// Whether to follow symlinks or not. 
     pub follow_symlinks: bool,
     
-    /// Whether to scan hidden files or not. TODO: IMPLEMENT
+    /// Whether to scan hidden files or not.
     pub scan_hidden_files: bool,
 }
 impl Default for ScannerConfig {
     fn default() -> Self {
         Self {
             min_severity: Severity::Low,
-            max_file_size_mb: 100,
+            max_file_size_mb: None,
             excluded_extensions: vec![
                 "jpg", "png", "gif", "mp4", "avi", "mkv",
                 "zip", "tar", "gz", "exe", "dll", "so",

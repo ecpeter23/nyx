@@ -63,6 +63,7 @@ pub fn spawn_senders(
     let root       = root.to_path_buf();
     let scan_hidden   = cfg.scanner.scan_hidden_files;
     let follow_links  = cfg.scanner.follow_symlinks;
+    let max_bytes: u64      = (cfg.scanner.max_file_size_mb.unwrap_or(0)) * 1_048_576;
 
     thread::spawn(move || {
         let walker = WalkBuilder::new(root)
@@ -72,6 +73,8 @@ pub fn spawn_senders(
           .overrides(overrides)
           .build_parallel();
 
+        
+        /*
         walker.run(move || {
             let tx = tx.clone();
             let mut batch = Vec::<PathBuf>::with_capacity(256);
@@ -90,6 +93,33 @@ pub fn spawn_senders(
                     }
                     Err(err) => tracing::error!("walk error: {err}"),
                     _ => {}
+                }
+                WalkState::Continue
+            })
+        });
+         */
+        walker.run(move || {
+            let mut batcher = Batcher {
+                tx: tx.clone(),
+                batch: Vec::with_capacity(BATCH_SIZE),
+            };
+
+            Box::new(move |entry| {
+                tracing::debug!("walking: {:?}", entry);
+                let e = match entry {
+                    Ok(e) if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) => e,
+                    _ => return WalkState::Continue,
+                };
+                if max_bytes != 0 {
+                    match e.metadata() {
+                        Ok(m) if m.len() <= max_bytes => {},
+                        _ => return WalkState::Continue,
+                    }
+                }
+                tracing::debug!("scanning file: {:?}", e);
+                batcher.push(e.into_path());
+                if batcher.batch.len() == BATCH_SIZE {
+                    let _ = batcher.tx.send(std::mem::take(&mut batcher.batch));
                 }
                 WalkState::Continue
             })

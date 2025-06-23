@@ -53,9 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_dir = proj_dirs.data_local_dir();
     fs::create_dir_all(database_dir)?;
 
-    let config = Config::load(config_dir)?;
+    let mut config = Config::load(config_dir)?;
 
-    commands::handle_command(cli.command, database_dir, &config)?;
+    commands::handle_command(cli.command, database_dir, &mut config)?;
 
     Ok(())
 }

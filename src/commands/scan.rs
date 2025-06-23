@@ -30,7 +30,6 @@ pub fn handle(
     no_index: bool,
     rebuild_index: bool,
     format: String,
-    high_only: bool,
     database_dir: &Path,
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -52,7 +51,7 @@ pub fn handle(
 
     if format == "console" || format == "" && config.output.default_format == "console" {
         for d in &diags {
-            if high_only && d.severity != Severity::High {
+            if d.severity != Severity::High {
                 continue;
             }
             let sev_str = match d.severity {
