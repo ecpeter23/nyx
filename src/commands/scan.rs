@@ -49,11 +49,11 @@ pub fn handle(
         diags = scan_with_index_parallel(&project_name, pool, config)?;
     }
 
-    if format == "console" || format == "" && config.output.default_format == "console" {
+    tracing::debug!("Found {:?} issues.", diags.len());
+    
+    if format == "console" || (format == "" && config.output.default_format == "console") {
+        tracing::debug!("Printing to console");
         for d in &diags {
-            if d.severity != Severity::High {
-                continue;
-            }
             let sev_str = match d.severity {
                 Severity::High => style("HIGH").red().bold(),
                 Severity::Medium => style("MEDIUM").yellow().bold(),
@@ -85,14 +85,14 @@ fn scan_filesystem(
 
     rx.into_iter()
       .flatten()
-      .par_bridge()                       // rayon hand-off
-      .try_for_each(|path| {              // stable API
-          let mut local = run_rules_on_file(&path, cfg).unwrap();   // <- same as before
+      .par_bridge()        
+      .try_for_each(|path| {          
+          let mut local = run_rules_on_file(&path, cfg).unwrap();  
           let mut guard = acc.lock().unwrap();
           guard.append(&mut local);
-          Ok::<(), DynError>(())          // explicit error type
-      })?;                                // propagate first error, if any
-
+          Ok::<(), DynError>(())        
+      })?;
+    
     Ok(acc.into_inner().unwrap())
 }
 
@@ -101,8 +101,6 @@ fn scan_with_index_parallel(
     pool: Arc<Pool<SqliteConnectionManager>>,
     cfg: &Config,
 ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
-
-    // Get the file list once (single connection, no contention)
     let files = {
         let idx = Indexer::from_pool(project, &pool)?;
         idx.get_files(project)?
@@ -153,6 +151,7 @@ pub(crate) fn run_rules_on_file(
     path: &Path,
     cfg: &Config,
 ) -> Result<Vec<Diag>, Box<dyn std::error::Error>> {
+    tracing::debug!("Running rules on {}", path.to_string_lossy());
     let bytes = std::fs::read(path)?;
 
     let mut parser = Parser::new();
@@ -187,12 +186,14 @@ pub(crate) fn run_rules_on_file(
 
     for cq in &compiled {
         if cfg.scanner.min_severity > cq.meta.severity {
+            tracing::debug!("Skipping rule {} because it's below the minimum severity", cq.meta.id);
             continue;
         }
         let mut matches = cursor.matches(&cq.query, root, &*bytes);
         while let Some(m) = matches.next() {
             for cap in m.captures.iter().filter(|c| c.index == 0) {
                 let point = cap.node.start_position();
+                tracing::debug!("Found match for rule {}", cq.meta.id);
                 out.push(Diag {
                     path: path.to_string_lossy().to_string(),
                     line: point.row + 1,

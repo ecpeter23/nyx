@@ -72,38 +72,13 @@ pub fn spawn_senders(
           .threads(worker_thrs)
           .overrides(overrides)
           .build_parallel();
-
-        
-        /*
-        walker.run(move || {
-            let tx = tx.clone();
-            let mut batch = Vec::<PathBuf>::with_capacity(256);
-
-            Box::new(move |entry| {
-                tracing::debug!("walking: {:?}", entry);
-                
-                let mut b = Batcher { tx: tx.clone(), batch: Vec::with_capacity(BATCH_SIZE) };
-                match entry {
-                    Ok(e) if e.file_type().is_some_and(|ft| ft.is_file()) => {
-                        b.push(e.into_path());
-                        tracing::debug!("scanning file: {:?}", b);
-                        if batch.len() == BATCH_SIZE {
-                            let _ = tx.send(std::mem::take(&mut batch));
-                        }
-                    }
-                    Err(err) => tracing::error!("walk error: {err}"),
-                    _ => {}
-                }
-                WalkState::Continue
-            })
-        });
-         */
+         
         walker.run(move || {
             let mut batcher = Batcher {
                 tx: tx.clone(),
                 batch: Vec::with_capacity(BATCH_SIZE),
             };
-
+        
             Box::new(move |entry| {
                 tracing::debug!("walking: {:?}", entry);
                 let e = match entry {
