@@ -26,6 +26,9 @@ jobs:
         with:
           toolchain: stable
           cache: true
+          
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Build (optimized)
         run: cargo build --release --target ${{ matrix.target }}
