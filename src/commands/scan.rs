@@ -105,9 +105,9 @@ fn scan_filesystem(root: &Path, cfg: &Config) -> NyxResult<Vec<Diag>> {
 
     let mut diags = acc.into_inner()?;
     if let Some(max) = cfg.output.max_results {
-      diags.truncate(max as usize);
+        diags.truncate(max as usize);
     }
-  
+
     Ok(diags)
 }
 
@@ -120,7 +120,7 @@ pub fn scan_with_index_parallel(
         let idx = Indexer::from_pool(project, &pool)?;
         idx.get_files(project)?
     };
-  
+
     let diag_map: DashMap<String, Vec<Diag>> = DashMap::new();
 
     files.into_par_iter().for_each_init(
@@ -156,12 +156,12 @@ pub fn scan_with_index_parallel(
 
     // Optional, heavy: only vacuum on --rebuild-index
     // if rebuild { idx.vacuum()?; }
-  
+
     let mut diags: Vec<Diag> = diag_map.into_iter().flat_map(|(_, v)| v).collect();
 
     if let Some(max) = cfg.output.max_results {
         diags.truncate(max as usize);
     }
-  
+
     Ok(diags)
 }

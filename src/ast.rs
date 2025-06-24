@@ -73,3 +73,30 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
     }
     Ok(out)
 }
+
+#[test]
+fn unknown_extension_returns_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let txt = dir.path().join("notes.txt");
+    std::fs::write(&txt, "just some text").unwrap();
+
+    let diags = run_rules_on_file(&txt, &Config::default())
+        .expect("function should never error on plain text");
+
+    assert!(diags.is_empty());
+}
+
+#[test]
+fn binary_file_guard_triggers() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("junk.bin");
+
+    let mut data = vec![0_u8; 2048];
+    for i in (0..data.len()).step_by(3) {
+        data[i] = 0;
+    }
+    std::fs::write(&bin, &data).unwrap();
+
+    let diags = run_rules_on_file(&bin, &Config::default()).unwrap();
+    assert!(diags.is_empty(), "binary files are skipped");
+}
