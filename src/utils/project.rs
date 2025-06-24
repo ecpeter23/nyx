@@ -41,7 +41,7 @@ fn sanitize_project_name_is_idempotent_and_lossless_enough() {
   ];
 
   for (input, expected) in samples {
-    assert_eq!(sanitize_project_name(input), expected, "input: {input}");
+    assert_eq!(sanitize_project_name(input), expected, "input: {}", input);
     assert_eq!(sanitize_project_name(expected), expected);
   }
 }
