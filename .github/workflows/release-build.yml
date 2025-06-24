@@ -14,12 +14,16 @@ jobs:
   build-and-upload:
     strategy:
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-          - x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.target == 'x86_64-pc-windows-msvc' && 'windows-latest' || (matrix.target == 'x86_64-apple-darwin' && 'macos-latest' || 'ubuntu-latest') }}
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-apple-darwin
+            os: macos-14 
+          - target: aarch64-apple-darwin
+            os: macos-14
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Check out sources
@@ -35,26 +39,21 @@ jobs:
       - name: Install target
         run: rustup target add ${{ matrix.target }}
 
-      - name: Build (optimized)
+      - name: Build
         run: cargo build --release --bin ${{ env.BIN_NAME }} --target ${{ matrix.target }}
 
-      - name: Package binary
+      - name: Package
         shell: bash
         run: |
           set -euo pipefail
-          BIN=${{ env.BIN_NAME }}
-          TARGET=${{ matrix.target }}
-          EXT=$([[ "$TARGET" == *windows* ]] && echo ".exe" || echo "")
-          BIN_PATH=target/$TARGET/release/$BIN$EXT
+          BIN_PATH=target/${{ matrix.target }}/release/${{ env.BIN_NAME }}$([[ "${{ matrix.target }}" == *windows* ]] && echo ".exe")
           if [[ ! -f "$BIN_PATH" ]]; then
-            echo "::error ::Binary $BIN_PATH not found"
-            ls -R target/$TARGET/release || true
-            exit 1
-          fi          
+            echo "::error ::expected binary not found"; ls -l target/${{ matrix.target }}/release; exit 1
+          fi
           mkdir -p dist
-          ARCHIVE=$BIN-$TARGET.zip
+          ARCHIVE=${{ env.BIN_NAME }}-${{ matrix.target }}.zip
           zip -9 "dist/$ARCHIVE" "$BIN_PATH"
-          echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV" 
 
       - name: Upload to the release
         uses: softprops/action-gh-release@v2
