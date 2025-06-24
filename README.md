@@ -1,131 +1,143 @@
+# Nyx
 
+**Nyx** is a lightweight, Rust‑native command‑line tool that detects potentially dangerous code patterns across several programming languages. It combines the accuracy of [`tree‑sitter`](https://tree-sitter.github.io/) parsing with a curated rule set and an optional SQLite‑backed index to deliver fast, repeatable scans on projects of any size.
 
-# Nyx - Lightweight Multi-Language Vulnerability Scanner
+> **Project status – Alpha**   
+> Nyx is under active development. The public interface, rule set, and output formats may change without notice while we stabilize the core. Please pin exact versions in production environments.
 
-Nyx is a lightweight Rust CLI tool for scanning code across multiple programming languages to detect potential vulnerabilities and code quality issues. It works by converting source code to Abstract Syntax Trees (ASTs), analyzing control flow graphs, performing taint analysis, and searching for common vulnerability patterns.
+---
 
-## Features
+## Key Capabilities
 
-- **Fast and Lightweight**: Written in Rust for optimal performance
-- **Multi-Language Support**: Scans code in multiple programming languages
-- **AST-Based Analysis**: Uses tree-sitter for accurate code parsing
-- **Project Indexing**: Maintains an index to avoid rescanning unchanged files
-- **Configurable**: Extensive configuration options for customizing scans
-- **Multiple Output Formats**: Supports table, JSON, CSV, and SARIF output formats
+| Capability                   | Description                                                                               |
+|------------------------------|-------------------------------------------------------------------------------------------|
+| Multi‑language support       | Rust, C, C++, Java, Go, PHP, Python, Ruby, TypeScript, JavaScript                         |
+| AST‑level pattern matching   | Language‑specific queries written against precise parse trees                             |
+| Incremental indexing         | SQLite database stores file hashes and previous findings to skip unchanged files          |
+| Parallel execution           | File walking and rule execution run concurrently; defaults scale with available CPU cores |
+| Configurable scan parameters | Exclude directories, set maximum file size, tune worker threads, limit output, and more   |
+| Multiple output formats      | Human‑readable console view (default) and machine‑readable JSON / CSV / SARIF (roadmap)   |
+
+---
 
 ## Installation
 
-### From Source
+### Build from source
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/nyx.git
-cd nyx
-
-# Build the project
-cargo build --release
-
-# Install the binary
-cargo install --path .
+$ git clone https://github.com/<your‑org>/nyx.git
+$ cd nyx
+$ cargo build --release
+# optional – copy the binary into PATH
+$ cargo install --path .
 ```
 
-## Usage
+Nyx targets **stable Rust 1.78 or later**.
 
-### Basic Scanning
+---
+
+## Quick Start
 
 ```bash
-# Scan the current directory
-nyx scan
+# Scan the current directory (creates/uses an index automatically)
+$ nyx scan
 
-# Scan a specific directory
-nyx scan /path/to/project
+# Scan a specific path and emit JSON
+$ nyx scan ./server --format json
 
-# Scan with specific output format
-nyx scan --format json
+# Perform an ad‑hoc scan without touching the index
+$ nyx scan --no-index
 
-# Scan only for high severity issues
-nyx scan --high-only
+# Restrict results to high‑severity findings
+$ nyx scan --high-only
 ```
 
-### Managing Project Indexes
+### Index Management
 
 ```bash
-# Build or update index for current project
-nyx index build
+# Create or rebuild an index
+$ nyx index build [PATH] [--force]
 
-# Force rebuild index
-nyx index build --force
+# Display index metadata (size, modified date, etc.)
+$ nyx index status [PATH]
 
-# Show index status
-nyx index status
+# List all indexed projects (add -v for detailed view)
+$ nyx list [-v]
 
-# List all indexed projects
-nyx list
-
-# List all indexed projects with details
-nyx list --verbose
-
-# Remove a project from index
-nyx clean project-name
-
-# Clean all projects
-nyx clean --all
+# Remove a single project or purge all indexes
+$ nyx clean <PROJECT_NAME>
+$ nyx clean --all
 ```
 
-## Supported Languages
+---
 
-Nyx currently supports scanning code in the following languages:
+## Configuration Overview
 
-- Rust
-- C
-- C++
-- Java
-- Go
-- PHP
-- Python
-- TypeScript
-- JavaScript
+Nyx merges a default configuration file (`nyx.conf`) with user overrides (`nyx.local`). Both live in the platform‑specific configuration directory shown below.
 
-## How It Works
+| Platform      | Directory                         |
+|---------------|-----------------------------------|
+| Linux / macOS | `~/.config/nyx/`                  |
+| Windows       | `%APPDATA%\ecpeter23\nyx\config\` |
 
-1. **Code Traversal**: Nyx walks through your project's directory structure, respecting ignore files and exclusion patterns.
-
-2. **AST Generation**: For each supported file, Nyx uses tree-sitter to parse the code into an Abstract Syntax Tree (AST).
-
-3. **Pattern Matching**: Nyx applies language-specific vulnerability patterns to the AST to identify potential issues.
-
-4. **Control Flow Analysis**: (Planned) Nyx will convert ASTs to control flow graphs for more sophisticated analysis.
-
-5. **Taint Analysis**: (Planned) Nyx will track the flow of untrusted data through your application.
-
-6. **Reporting**: Issues are reported with severity levels, file locations, and descriptions.
-
-## Configuration
-
-Nyx uses a configuration system with defaults that can be overridden by a user-specific configuration file. The configuration file is located at:
-
-- Linux/macOS: `~/.config/nyx/nyx.local`
-- Windows: `C:\Users\<username>\AppData\Roaming\ecpeter23\nyx\config\nyx.local`
-
-Example configuration:
+Minimal example (`nyx.local`):
 
 ```toml
 [scanner]
-min_severity = "Medium"
-follow_symlinks = true
+min_severity        = "Medium"
+follow_symlinks     = true
+excluded_extensions = ["mp3", "mp4"]
 
 [output]
 default_format = "json"
-color_output = true
+max_results    = 200
 
 [performance]
-worker_threads = 8
+worker_threads     = 8  # 0 = auto‑detect
+batch_size         = 200
+channel_multiplier = 2
 ```
 
-## License
+A fully documented `nyx.conf` is generated automatically on first run.
 
-[Add your license information here]
+---
+
+## Architecture in Brief
+
+1. **File enumeration** – A highly parallel walker applies ignore rules, size limits, and user exclusions.
+2. **Parsing** – Supported files are parsed into ASTs via the appropriate `tree‑sitter` grammar.
+3. **Rule execution** – Each language ships with a dedicated rule set expressed as `tree‑sitter` queries. Matches are classified into three severity levels (`High`, `Medium`, `Low`).
+4. **Indexing (optional)** – File digests and findings are stored in SQLite. Later scans skip files whose content and modification time are unchanged.
+5. **Reporting** – Results are grouped by file and emitted to the console or serialized in the requested format.
+
+---
+
+## Roadmap
+
+| Area                   | Planned Improvements                                                      |
+|------------------------|---------------------------------------------------------------------------|
+| Control‑flow analysis  | Generation of CFGs for deeper reasoning about execution paths             |
+| Taint tracking         | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks |
+| Output formats         | Full SARIF 2.1.0, JUnit XML, HTML report generator                        |
+| Rule updates           | Remote rule feed with signature verification                              |
+
+Community feedback will help shape priorities; please open an issue to discuss proposed changes.
+
+---
 
 ## Contributing
 
-[Add contribution guidelines here]
+Pull requests are welcome. To contribute:
+
+1. Fork the repository and create a feature branch.
+2. Adhere to `rustfmt` and ensure `cargo clippy --all -- -D warnings` passes.
+3. Add unit and/or integration tests where applicable (`cargo test` should remain green).
+4. Submit a concise, well‑documented pull request.
+
+See `CONTRIBUTING.md` for full guidelines.
+
+---
+
+## License
+
+Nyx is dual‑licensed under **Apache‑2.0** and **MIT**. You may choose either license.
