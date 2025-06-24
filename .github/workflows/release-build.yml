@@ -36,15 +36,20 @@ jobs:
       - name: Package binary
         shell: bash
         run: |
-          BIN=nyx                
+          set -euo pipefail
+          BIN=${{ env.BIN_NAME }}
           TARGET=${{ matrix.target }}
-          EXT=$([ "$TARGET" = "x86_64-pc-windows-msvc" ] && echo ".exe")
+          EXT=$([[ "$TARGET" == *windows* ]] && echo ".exe" || echo "")
+          BIN_PATH=target/$TARGET/release/$BIN$EXT
+          if [[ ! -f "$BIN_PATH" ]]; then
+            echo "::error ::Binary $BIN_PATH not found"
+            ls -R target/$TARGET/release || true
+            exit 1
+          fi          
           mkdir -p dist
-          cp target/$TARGET/release/$BIN$EXT dist/
-          cd dist
-          ARCHIVE=${BIN}-${TARGET}.zip  # zip works everywhere; tar.gz is fine too
-          zip -9 $ARCHIVE $BIN$EXT
-          echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
+          ARCHIVE=$BIN-$TARGET.zip
+          zip -9 "dist/$ARCHIVE" "$BIN_PATH"
+          echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload to the release
         uses: softprops/action-gh-release@v2
