@@ -28,3 +28,36 @@ pub fn sanitize_project_name(name: &str) -> String {
         .collect::<Vec<_>>()
         .join("_")
 }
+
+#[test]
+fn sanitize_project_name_is_idempotent_and_lossless_enough() {
+  let samples = [
+    ("My Project",      "my_project"),
+    ("Hello-World",     "hello-world"),
+    ("mixed_case",      "mixed_case"),
+    ("tabs\tspaces\n",  "tabs_spaces"),
+    ("   multiple   ",  "multiple"),
+    ("weird@$*chars",   "weird_chars"),
+  ];
+
+  for (input, expected) in samples {
+    assert_eq!(sanitize_project_name(input), expected, "input: {}", input);
+    assert_eq!(sanitize_project_name(expected), expected);
+  }
+}
+
+#[test]
+fn get_project_info_uses_sanitized_name_in_sqlite_path() {
+  let tmp = tempfile::tempdir().unwrap();
+  let root = tmp.path();
+  
+  let project_dir = root.join("Example Project");
+  std::fs::create_dir(&project_dir).unwrap();
+
+  let (project_name, db_path) =
+    get_project_info(&project_dir, root).expect("should detect project");
+
+  assert_eq!(project_name, "Example Project");
+  assert_eq!(db_path, root.join("example_project.sqlite"));
+}
+

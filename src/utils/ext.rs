@@ -12,3 +12,19 @@ pub fn lowercase_ext(path: &std::path::Path) -> Option<&'static str> {
         _ => None,
     })
 }
+
+#[test]
+fn lowercase_ext_recognises_known_extensions() {
+  let cases = [
+    ("file.rs",  Some("rs")),
+    ("FILE.RS",  Some("rs")),
+    ("main.cpp", Some("cpp")),
+    ("script.PY",Some("py")),
+    ("index.tsx",Some("ts")),
+    ("style.css",None),      // unsupported
+  ];
+
+  for (file, expected) in cases {
+    assert_eq!(lowercase_ext(std::path::Path::new(file)), expected, "case: {file}");
+  }
+}
