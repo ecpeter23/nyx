@@ -64,7 +64,7 @@ impl From<Box<dyn std::error::Error>> for NyxError {
 
 #[test]
 fn io_conversion_retains_message() {
-    let e = std::io::Error::new(std::io::ErrorKind::Other, "boom!");
+    let e = std::io::Error::other("boom!");
     let n: NyxError = e.into();
     assert!(matches!(n, NyxError::Io(_)));
     assert!(n.to_string().contains("boom"));
