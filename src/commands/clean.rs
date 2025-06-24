@@ -1,13 +1,9 @@
-use std::{env, fs};
-use console::style;
 use crate::errors::NyxResult;
 use crate::utils::get_project_info;
+use console::style;
+use std::{env, fs};
 
-pub fn handle(
-    project: Option<String>,
-    all: bool,
-    config_dir: &std::path::Path,
-) -> NyxResult<()> {
+pub fn handle(project: Option<String>, all: bool, config_dir: &std::path::Path) -> NyxResult<()> {
     if all {
         println!("{}", style("Cleaning all indexes...").cyan().bold());
         if config_dir.exists() {
@@ -19,9 +15,17 @@ pub fn handle(
         let db_path = config_dir.join(format!("{}.sqlite", proj_name));
         if db_path.exists() {
             fs::remove_file(&db_path)?;
-            println!("{} {}", style("✔ Cleaned index for").green(), style(&proj_name).white().bold());
+            println!(
+                "{} {}",
+                style("✔ Cleaned index for").green(),
+                style(&proj_name).white().bold()
+            );
         } else {
-            println!("{} {}", style("✖ No index found for").red(), style(&proj_name).white().bold());
+            println!(
+                "{} {}",
+                style("✖ No index found for").red(),
+                style(&proj_name).white().bold()
+            );
         }
     } else {
         let current_dir = env::current_dir()?;
@@ -29,9 +33,17 @@ pub fn handle(
 
         if db_path.exists() {
             fs::remove_file(&db_path)?;
-            println!("{} {}", style("✔ Cleaned index for").green(), style(&project_name).white().bold());
+            println!(
+                "{} {}",
+                style("✔ Cleaned index for").green(),
+                style(&project_name).white().bold()
+            );
         } else {
-            println!("{} {}", style("✖ No index found for current project").red(), style(&project_name).white().bold());
+            println!(
+                "{} {}",
+                style("✖ No index found for current project").red(),
+                style(&project_name).white().bold()
+            );
         }
     }
 

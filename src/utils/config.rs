@@ -1,25 +1,25 @@
-use serde::{Deserialize, Serialize};
-use std::path::{Path};
-use std::fs;
-use console::style;
-use toml;
 use crate::patterns::Severity;
+use console::style;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+use toml;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct ScannerConfig {
     /// The minimum severity level to output
     pub min_severity: Severity,
-    
+
     /// The maximum file size to scan, in megabytes.
     pub max_file_size_mb: Option<u64>,
-    
+
     /// File extensions to exclude from scanning.
     pub excluded_extensions: Vec<String>,
-    
+
     /// Directories to exclude from scanning.
     pub excluded_directories: Vec<String>,
-    
+
     /// Excluded files
     pub excluded_files: Vec<String>,
 
@@ -34,10 +34,10 @@ pub struct ScannerConfig {
 
     /// Whether to limit the search to starting file system or not.
     pub one_file_system: bool,
-    
-    /// Whether to follow symlinks or not. 
+
+    /// Whether to follow symlinks or not.
     pub follow_symlinks: bool,
-    
+
     /// Whether to scan hidden files or not.
     pub scan_hidden_files: bool,
 }
@@ -47,22 +47,24 @@ impl Default for ScannerConfig {
             min_severity: Severity::Low,
             max_file_size_mb: None,
             excluded_extensions: vec![
-                "jpg", "png", "gif", "mp4", "avi", "mkv",
-                "zip", "tar", "gz", "exe", "dll", "so",
+                "jpg", "png", "gif", "mp4", "avi", "mkv", "zip", "tar", "gz", "exe", "dll", "so",
             ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
             excluded_directories: vec![
-                "node_modules", ".git", "target", ".vscode", ".idea", "build", "dist",
+                "node_modules",
+                ".git",
+                "target",
+                ".vscode",
+                ".idea",
+                "build",
+                "dist",
             ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            excluded_files: vec![]
-              .into_iter()
-              .map(str::to_owned)
-              .collect(),
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            excluded_files: vec![].into_iter().map(str::to_owned).collect(),
             read_global_ignore: false,
             read_vcsignore: true,
             require_git_to_read_vcsignore: true,
@@ -76,18 +78,22 @@ impl Default for ScannerConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct DatabaseConfig {
+    /// Custom path for database
+    pub path: String,
+
     /// The number of days to keep database files for. TODO: IMPLEMENT
     pub auto_cleanup_days: u32,
-    
+
     /// The maximum size of the database, in megabytes. TODO: IMPLEMENT
     pub max_db_size_mb: u64,
-    
+
     /// Whether to run a VACUUM on startup or not. TODO: IMPLEMENT
     pub vacuum_on_startup: bool,
 }
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
+            path: String::from(""),
             auto_cleanup_days: 30,
             max_db_size_mb: 1024,
             vacuum_on_startup: false,
@@ -100,15 +106,12 @@ impl Default for DatabaseConfig {
 pub struct OutputConfig {
     /// The default output format. TODO: IMPLEMENT others
     pub default_format: String,
-    
+
     /// Whether to show progress or not. TODO: IMPLEMENT
     pub show_progress: bool,
-    
-    /// Whether to colorize output or not. TODO: IMPLEMENT changing to non colored
-    pub color_output: bool,
-    
-    /// The maximum number of results to show. TODO: IMPLEMENT
-    pub max_results: Option<u32>, 
+
+    /// The maximum number of results to show.
+    pub max_results: Option<u32>,
 }
 
 impl Default for OutputConfig {
@@ -116,7 +119,6 @@ impl Default for OutputConfig {
         Self {
             default_format: "console".into(),
             show_progress: true,
-            color_output: true,
             max_results: None,
         }
     }
@@ -128,21 +130,27 @@ pub struct PerformanceConfig {
     /// The maximum search depth, or `None` if no maximum search depth should be set.
     ///
     /// A depth of `1` includes all files under the current directory, a depth of `2` also includes
-    /// all files under subdirectories of the current directory, etc. 
+    /// all files under subdirectories of the current directory, etc.
     pub max_depth: Option<usize>, // TODO: IMPLEMENT
 
     /// The minimum depth for reported entries, or `None`.
     pub min_depth: Option<usize>, // TODO: IMPLEMENT
 
     /// Whether to stop traversing into matching directories.
-    pub prune: bool, // TODO: IMPLEMENT
+    pub prune: bool,
 
     /// The maximum number of worker threads to use., or `None` to auto-detect.
-    pub worker_threads: Option<usize>, // TODO: IMPLEMENT
-    
+    pub worker_threads: Option<usize>,
+
     /// The maximum number of entries to index in a single chunk.
-    pub index_chunk_size: u32, // TODO: IMPLEMENT
-    
+    pub batch_size: usize,
+
+    /// capacity = threads × this
+    pub channel_multiplier: usize,
+
+    /// Timeout on individual files // TODO: IMPLEMENT
+    pub scan_timeout_secs: Option<u64>,
+
     /// The maximum amount of memory to use, in megabytes.
     pub memory_limit_mb: u64, // TODO: IMPLEMENT
 }
@@ -154,7 +162,9 @@ impl Default for PerformanceConfig {
             min_depth: None,
             prune: false,
             worker_threads: None,
-            index_chunk_size: 1_000,
+            batch_size: 100usize,
+            channel_multiplier: 4usize,
+            scan_timeout_secs: None,
             memory_limit_mb: 512,
         }
     }
@@ -170,11 +180,8 @@ pub struct Config {
     pub performance: PerformanceConfig,
 }
 
-
 impl Config {
-    pub fn load(
-        config_dir: &Path,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load(config_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = Config::default();
 
         let default_config_path = config_dir.join("nyx.conf");
@@ -188,24 +195,32 @@ impl Config {
             let user_config: Config = toml::from_str(&user_config_content)?;
 
             config = merge_configs(config, user_config);
-            
-            println!("{}: Loaded user config from: {}\n",
-                     style("note").green().bold(),
-                     style(user_config_path.display()).underlined().white().bold());
+
+            println!(
+                "{}: Loaded user config from: {}\n",
+                style("note").green().bold(),
+                style(user_config_path.display())
+                    .underlined()
+                    .white()
+                    .bold()
+            );
         } else {
-            println!("{}: Using {} configuration.\n      Create file in '{}'to customize.\n",
-                     style("note").green().bold(),
-                     style("default").bold(),
-                     style(user_config_path.display()).underlined().white().bold());
+            println!(
+                "{}: Using {} configuration.\n      Create file in '{}'to customize.\n",
+                style("note").green().bold(),
+                style("default").bold(),
+                style(user_config_path.display())
+                    .underlined()
+                    .white()
+                    .bold()
+            );
         }
 
         Ok(config)
     }
 }
 
-fn create_example_config(
-    config_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn create_example_config(config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let example_path = config_dir.join("nyx.conf");
 
     let default_config = Config::default();
@@ -213,7 +228,7 @@ fn create_example_config(
 
     // Add comments to make it user-friendly
     let commented_content = format!(
-            "# nnyx Vulnerability Scanner Configuration\n\
+        "# nnyx Vulnerability Scanner Configuration\n\
              # YOU SHOULD NOT MODIFY THIS FILE.\n\
              # Create/modify 'nyx.local' to set configs\n\
              # Only include the sections you want to override\n\n{}",
@@ -230,40 +245,46 @@ fn create_example_config(
 /// supply new exclusions and overriding everything else.
 fn merge_configs(mut default: Config, user: Config) -> Config {
     // --- ScannerConfig ---
-    default.scanner.max_file_size_mb               = user.scanner.max_file_size_mb;
-    default.scanner.read_global_ignore             = user.scanner.read_global_ignore;
-    default.scanner.read_vcsignore                 = user.scanner.read_vcsignore;
-    default.scanner.require_git_to_read_vcsignore  = user.scanner.require_git_to_read_vcsignore;
-    default.scanner.one_file_system                = user.scanner.one_file_system;
-    default.scanner.follow_symlinks                = user.scanner.follow_symlinks;
-    default.scanner.scan_hidden_files              = user.scanner.scan_hidden_files;
+    default.scanner.max_file_size_mb = user.scanner.max_file_size_mb;
+    default.scanner.read_global_ignore = user.scanner.read_global_ignore;
+    default.scanner.read_vcsignore = user.scanner.read_vcsignore;
+    default.scanner.require_git_to_read_vcsignore = user.scanner.require_git_to_read_vcsignore;
+    default.scanner.one_file_system = user.scanner.one_file_system;
+    default.scanner.follow_symlinks = user.scanner.follow_symlinks;
+    default.scanner.scan_hidden_files = user.scanner.scan_hidden_files;
 
     // Merge exclusion lists (default ⊔ user), then sort & dedupe
-    default.scanner.excluded_extensions.extend(user.scanner.excluded_extensions);
-    default.scanner.excluded_directories.extend(user.scanner.excluded_directories);
+    default
+        .scanner
+        .excluded_extensions
+        .extend(user.scanner.excluded_extensions);
+    default
+        .scanner
+        .excluded_directories
+        .extend(user.scanner.excluded_directories);
     default.scanner.excluded_extensions.sort_unstable();
     default.scanner.excluded_extensions.dedup();
     default.scanner.excluded_directories.sort_unstable();
     default.scanner.excluded_directories.dedup();
 
     // --- DatabaseConfig ---
-    default.database.auto_cleanup_days  = user.database.auto_cleanup_days;
-    default.database.max_db_size_mb     = user.database.max_db_size_mb;
-    default.database.vacuum_on_startup  = user.database.vacuum_on_startup;
+    default.database.auto_cleanup_days = user.database.auto_cleanup_days;
+    default.database.max_db_size_mb = user.database.max_db_size_mb;
+    default.database.vacuum_on_startup = user.database.vacuum_on_startup;
 
     // --- OutputConfig ---
-    default.output.default_format  = user.output.default_format;
-    default.output.show_progress   = user.output.show_progress;
-    default.output.color_output    = user.output.color_output;
-    default.output.max_results     = user.output.max_results;
+    default.output.default_format = user.output.default_format;
+    default.output.show_progress = user.output.show_progress;
+    default.output.max_results = user.output.max_results;
 
     // --- PerformanceConfig ---
-    default.performance.max_depth        = user.performance.max_depth;
-    default.performance.min_depth        = user.performance.min_depth;
-    default.performance.prune            = user.performance.prune;
-    default.performance.worker_threads   = user.performance.worker_threads;
-    default.performance.index_chunk_size = user.performance.index_chunk_size;
-    default.performance.memory_limit_mb  = user.performance.memory_limit_mb;
+    default.performance.max_depth = user.performance.max_depth;
+    default.performance.min_depth = user.performance.min_depth;
+    default.performance.prune = user.performance.prune;
+    default.performance.worker_threads = user.performance.worker_threads;
+    default.performance.batch_size = user.performance.batch_size;
+    default.performance.channel_multiplier = user.performance.channel_multiplier;
+    default.performance.memory_limit_mb = user.performance.memory_limit_mb;
 
     default
 }
