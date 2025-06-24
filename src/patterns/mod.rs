@@ -7,6 +7,7 @@ mod java;
 mod go;
 mod php;
 mod python;
+mod ruby;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -52,20 +53,6 @@ impl FromStr for Severity { // TODO: FIX
   }
 }
 
-// /// How bad / noisy a pattern is considered.
-// #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, PartialOrd)]
-// pub enum Severity {
-//   Low,
-//   Medium,
-//   High,
-// }
-// 
-// impl Severity {
-//   pub(crate) fn as_db_str(&self) -> &str {
-//     todo!()
-//   }
-// }
-
 /// One AST pattern with a tree-sitter query and meta-data.
 #[derive(Debug, Clone, Serialize)]
 pub struct Pattern {
@@ -108,6 +95,8 @@ static REGISTRY: Lazy<HashMap<&'static str, &'static [Pattern]>> = Lazy::new(|| 
   m.insert("php", php::PATTERNS);
   m.insert("python", python::PATTERNS);
   m.insert("py", python::PATTERNS);
+  m.insert("ruby", ruby::PATTERNS);
+  m.insert("rb", ruby::PATTERNS);
 
   tracing::debug!("AST-pattern registry initialised ({} languages)", m.len());
   
@@ -121,7 +110,7 @@ pub fn load(lang: &str) -> Vec<Pattern> {
   let key = lang.to_ascii_lowercase();
   REGISTRY
     .get(key.as_str())
-    .copied()            // `&'static [Pattern]` → *copy* the slice pointer
-    .unwrap_or(&[])      // unknown lang ⇒ empty slice
-    .to_vec()            // caller owns the `Vec`
+    .copied()           
+    .unwrap_or(&[])   
+    .to_vec()         
 }

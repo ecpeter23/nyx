@@ -32,6 +32,7 @@ pub(crate) fn run_rules_on_file(
     Some("py")  => (Language::from(tree_sitter_python::LANGUAGE),                 "python"),
     Some("ts")  => (Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),  "typescript"),
     Some("js")  => (Language::from(tree_sitter_javascript::LANGUAGE),             "javascript"),
+    Some("rb")  => (Language::from(tree_sitter_ruby::LANGUAGE),                    "ruby"),
     _           => return Ok(vec![]),
   };
 
