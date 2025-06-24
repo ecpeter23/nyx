@@ -129,3 +129,30 @@ pub fn build_index(
 
     Ok(())
 }
+
+#[test]
+fn build_index_creates_db_and_registers_files() {
+    let mut cfg = Config::default();
+    cfg.performance.worker_threads = Some(1);
+    cfg.performance.channel_multiplier = 1;
+    cfg.performance.batch_size = 2;
+
+    let td = tempfile::tempdir().unwrap();
+    let project_dir = td.path().join("proj");
+    fs::create_dir(&project_dir).unwrap();
+    let f_txt = project_dir.join("readme.txt");
+    fs::write(&f_txt, "hello").unwrap();
+
+    let db_path = td.path().join("proj.sqlite");
+
+    build_index("proj", &project_dir, &db_path, &cfg).expect("index build should succeed");
+
+    // ── Assert ────────────────────────────────────────────────────────────────
+    assert!(db_path.is_file(), "SQLite file must exist");
+
+    let pool = Indexer::init(&db_path).unwrap();
+    let idx = Indexer::from_pool("proj", &pool).unwrap();
+    let files = idx.get_files("proj").unwrap();
+    assert_eq!(files.len(), 1, "exactly one file indexed");
+    assert_eq!(files[0], f_txt);
+}

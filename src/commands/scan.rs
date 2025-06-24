@@ -165,3 +165,35 @@ pub fn scan_with_index_parallel(
 
     Ok(diags)
 }
+
+#[test]
+fn scan_with_index_parallel_uses_existing_index_without_rescanning() {
+    let mut cfg = Config::default();
+    cfg.performance.worker_threads = Some(1);
+    cfg.performance.channel_multiplier = 1;
+    cfg.performance.batch_size = 2;
+
+    let td = tempfile::tempdir().unwrap();
+    let project_dir = td.path().join("proj");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("foo.txt"), "abc").unwrap();
+
+    let (project_name, db_path) = get_project_info(&project_dir, td.path()).unwrap();
+    crate::commands::index::build_index(&project_name, &project_dir, &db_path, &cfg).unwrap();
+
+    let pool = Indexer::init(&db_path).unwrap();
+
+    assert_eq!(
+        Indexer::from_pool(&project_name, &pool)
+            .unwrap()
+            .get_files(&project_name)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let diags = scan_with_index_parallel(&project_name, Arc::clone(&pool), &cfg)
+        .expect("scan should succeed");
+
+    assert!(diags.is_empty());
+}
