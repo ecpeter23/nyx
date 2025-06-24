@@ -1,0 +1,51 @@
+name: Release build & publish
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.target == 'x86_64-pc-windows-msvc' && 'windows-latest' || (matrix.target == 'x86_64-apple-darwin' && 'macos-latest' || 'ubuntu-latest') }}
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: true
+
+      - name: Build (optimized)
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package binary
+        shell: bash
+        run: |
+          BIN=nyx                
+          TARGET=${{ matrix.target }}
+          EXT=$([ "$TARGET" = "x86_64-pc-windows-msvc" ] && echo ".exe")
+          mkdir -p dist
+          cp target/$TARGET/release/$BIN$EXT dist/
+          cd dist
+          ARCHIVE=${BIN}-${TARGET}.zip  # zip works everywhere; tar.gz is fine too
+          zip -9 $ARCHIVE $BIN$EXT
+          echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
+
+      - name: Upload to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.ASSET }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
