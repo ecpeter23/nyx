@@ -1,9 +1,12 @@
+use crate::errors::NyxResult;
 use crate::patterns::Severity;
 use console::style;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use toml;
+
+static DEFAULT_CONFIG_TOML: &str = include_str!("../../default-nyx.conf");
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -107,8 +110,8 @@ pub struct OutputConfig {
     /// The default output format. TODO: IMPLEMENT others
     pub default_format: String,
 
-    /// Whether to show progress or not. TODO: IMPLEMENT
-    pub show_progress: bool,
+    /// Whether to print anything to the console or not. TODO: IMPLEMENT
+    pub quiet: bool,
 
     /// The maximum number of results to show.
     pub max_results: Option<u32>,
@@ -118,7 +121,7 @@ impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             default_format: "console".into(),
-            show_progress: true,
+            quiet: false,
             max_results: None,
         }
     }
@@ -181,7 +184,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn load(config_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load(config_dir: &Path) -> NyxResult<Self> {
         let mut config = Config::default();
 
         let default_config_path = config_dir.join("nyx.conf");
@@ -220,24 +223,12 @@ impl Config {
     }
 }
 
-fn create_example_config(config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn create_example_config(config_dir: &Path) -> NyxResult<()> {
     let example_path = config_dir.join("nyx.conf");
-
-    let default_config = Config::default();
-    let toml_content = toml::to_string_pretty(&default_config)?;
-
-    // Add comments to make it user-friendly
-    let commented_content = format!(
-        "# nnyx Vulnerability Scanner Configuration\n\
-             # YOU SHOULD NOT MODIFY THIS FILE.\n\
-             # Create/modify 'nyx.local' to set configs\n\
-             # Only include the sections you want to override\n\n{}",
-        toml_content
-    );
-
-    fs::write(&example_path, commented_content)?;
-    println!("Example config created at: {}", example_path.display());
-
+    if !example_path.exists() {
+        fs::write(&example_path, DEFAULT_CONFIG_TOML)?;
+        tracing::debug!("Example config created at: {}", example_path.display());
+    }
     Ok(())
 }
 
@@ -245,6 +236,7 @@ fn create_example_config(config_dir: &Path) -> Result<(), Box<dyn std::error::Er
 /// supply new exclusions and overriding everything else.
 fn merge_configs(mut default: Config, user: Config) -> Config {
     // --- ScannerConfig ---
+    default.scanner.min_severity = user.scanner.min_severity;
     default.scanner.max_file_size_mb = user.scanner.max_file_size_mb;
     default.scanner.read_global_ignore = user.scanner.read_global_ignore;
     default.scanner.read_vcsignore = user.scanner.read_vcsignore;
@@ -268,13 +260,14 @@ fn merge_configs(mut default: Config, user: Config) -> Config {
     default.scanner.excluded_directories.dedup();
 
     // --- DatabaseConfig ---
+    default.database.path = user.database.path;
     default.database.auto_cleanup_days = user.database.auto_cleanup_days;
     default.database.max_db_size_mb = user.database.max_db_size_mb;
     default.database.vacuum_on_startup = user.database.vacuum_on_startup;
 
     // --- OutputConfig ---
     default.output.default_format = user.output.default_format;
-    default.output.show_progress = user.output.show_progress;
+    default.output.quiet = user.output.quiet;
     default.output.max_results = user.output.max_results;
 
     // --- PerformanceConfig ---
@@ -284,6 +277,7 @@ fn merge_configs(mut default: Config, user: Config) -> Config {
     default.performance.worker_threads = user.performance.worker_threads;
     default.performance.batch_size = user.performance.batch_size;
     default.performance.channel_multiplier = user.performance.channel_multiplier;
+    default.performance.scan_timeout_secs = user.performance.scan_timeout_secs;
     default.performance.memory_limit_mb = user.performance.memory_limit_mb;
 
     default

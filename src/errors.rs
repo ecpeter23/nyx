@@ -10,6 +10,9 @@ pub enum NyxError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("TOML parse error: {0}")]
+    Toml(#[from] toml::de::Error),
+
     #[error("SQLite error: {0}")]
     Sql(#[from] rusqlite::Error),
 
