@@ -318,6 +318,6 @@ fn load_creates_example_and_reads_user_overrides() {
   assert!(cfg.scanner.one_file_system);
   assert!(cfg.output.quiet);
   assert!(cfg.scanner.excluded_extensions.contains(&"foo".to_string()));
-  
-  assert_eq!(cfg.scanner.follow_symlinks, false);
+
+  assert!(!cfg.scanner.follow_symlinks);
 }
