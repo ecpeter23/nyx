@@ -45,7 +45,7 @@ jobs:
       - name: Install cargo-about
         run: cargo install cargo-about --locked
 
-      - name: Generate licence bundle
+      - name: Generate license bundle
         run: cargo about generate --format html > THIRDPARTY-LICENSES.html
 
       - name: Package
