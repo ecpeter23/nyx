@@ -61,3 +61,37 @@ impl From<Box<dyn std::error::Error>> for NyxError {
         NyxError::Msg(err.to_string())
     }
 }
+
+#[test]
+fn io_conversion_retains_message() {
+    let e = std::io::Error::new(std::io::ErrorKind::Other, "boom!");
+    let n: NyxError = e.into();
+    assert!(matches!(n, NyxError::Io(_)));
+    assert!(n.to_string().contains("boom"));
+}
+
+#[test]
+fn poison_conversion_maps_correct_variant() {
+    let lock = std::sync::Arc::new(std::sync::Mutex::new(()));
+
+    {
+        let lock2 = std::sync::Arc::clone(&lock);
+        std::thread::spawn(move || {
+            let _guard = lock2.lock().unwrap();
+            panic!("intentional – poison the mutex");
+        })
+        .join()
+        .ok();
+    }
+
+    let poison = lock.lock().unwrap_err();
+    let nyx: NyxError = poison.into();
+
+    assert!(matches!(nyx, NyxError::Poison(_)));
+}
+
+#[test]
+fn simple_string_into_msg() {
+    let nyx: NyxError = "plain msg".into();
+    assert!(matches!(nyx, NyxError::Msg(s) if s == "plain msg"));
+}

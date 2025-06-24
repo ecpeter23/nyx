@@ -105,3 +105,23 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
 
     rx
 }
+
+#[test]
+fn walker_respects_excluded_extensions() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("keep.rs"), "fn main(){}").unwrap();
+    std::fs::write(tmp.path().join("skip.txt"), "ignored").unwrap();
+
+    let mut cfg = Config::default();
+    cfg.scanner.excluded_extensions = vec!["txt".into()];
+    cfg.performance.worker_threads = Some(1);
+    cfg.performance.channel_multiplier = 1;
+    cfg.performance.batch_size = 2;
+
+    let rx = spawn_senders(tmp.path(), &cfg);
+
+    let all: Vec<_> = rx.into_iter().flatten().collect();
+
+    assert!(all.iter().any(|p| p.ends_with("keep.rs")));
+    assert!(all.iter().all(|p| !p.ends_with("skip.txt")));
+}

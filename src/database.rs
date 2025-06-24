@@ -240,3 +240,84 @@ pub mod index {
         }
     }
 }
+
+#[test]
+fn indexer_should_scan_and_upsert_logic() {
+    let td = tempfile::tempdir().unwrap();
+    let db = td.path().join("nyx.sqlite");
+    let file = td.path().join("sample.rs");
+    std::fs::write(&file, "fn main() {}").unwrap();
+
+    let pool = index::Indexer::init(&db).unwrap();
+    let idx = index::Indexer::from_pool("proj", &pool).unwrap();
+
+    // first time: nothing in DB → must scan
+    assert!(idx.should_scan(&file).unwrap());
+
+    // after upsert: no changes → should *not* scan
+    idx.upsert_file(&file).unwrap();
+    assert!(!idx.should_scan(&file).unwrap());
+
+    // modify contents
+    std::thread::sleep(std::time::Duration::from_millis(25)); // ensure mtime tick
+    std::fs::write(&file, "fn main() { /* changed */ }").unwrap();
+    assert!(idx.should_scan(&file).unwrap());
+}
+
+#[test]
+fn replace_issues_and_query_back() {
+    let td = tempfile::tempdir().unwrap();
+    let db = td.path().join("nyx.sqlite");
+    let file = td.path().join("code.go");
+    std::fs::write(&file, "package main").unwrap();
+
+    let pool = index::Indexer::init(&db).unwrap();
+    let mut idx = index::Indexer::from_pool("proj", &pool).unwrap();
+    let fid = idx.upsert_file(&file).unwrap();
+
+    let issues = [
+        index::IssueRow {
+            rule_id: "X1",
+            severity: "High",
+            line: 3,
+            col: 7,
+        },
+        index::IssueRow {
+            rule_id: "X2",
+            severity: "Low",
+            line: 4,
+            col: 1,
+        },
+    ];
+    idx.replace_issues(fid, issues.clone()).unwrap();
+
+    let stored = idx.get_issues_from_file(&file).unwrap();
+    assert_eq!(stored.len(), 2);
+    assert!(
+        stored
+            .iter()
+            .any(|d| d.id == "X1" && d.severity == crate::patterns::Severity::High)
+    );
+    assert!(
+        stored
+            .iter()
+            .any(|d| d.id == "X2" && d.severity == crate::patterns::Severity::Low)
+    );
+}
+
+#[test]
+fn clear_and_vacuum_reset_tables() {
+    let td = tempfile::tempdir().unwrap();
+    let db = td.path().join("nyx.sqlite");
+    let f = td.path().join("f.rs");
+    std::fs::write(&f, "//").unwrap();
+
+    let pool = index::Indexer::init(&db).unwrap();
+    let idx = index::Indexer::from_pool("proj", &pool).unwrap();
+    idx.upsert_file(&f).unwrap();
+
+    assert!(!idx.get_files("proj").unwrap().is_empty());
+    idx.clear().unwrap();
+    idx.vacuum().unwrap();
+    assert!(idx.get_files("proj").unwrap().is_empty());
+}
