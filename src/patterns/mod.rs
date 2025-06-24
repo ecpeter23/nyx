@@ -59,8 +59,7 @@ impl FromStr for Severity {
 }
 
 /// One AST pattern with a tree-sitter query and meta-data.
-#[derive(Debug, Clone, Serialize)]
-#[derive(PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Pattern {
     /// Unique identifier (snake-case preferred).
     pub id: &'static str,
@@ -117,32 +116,32 @@ pub fn load(lang: &str) -> Vec<Pattern> {
 
 #[test]
 fn severity_as_db_str_roundtrip() {
-  for &s in &[Severity::High, Severity::Medium, Severity::Low] {
-    let db = s.as_db_str();
-    assert!(matches!(db, "HIGH" | "MEDIUM" | "LOW"));
-    
-    assert_eq!(db.parse::<Severity>().unwrap(), s);
-    assert_eq!(db.to_lowercase().parse::<Severity>().unwrap(), s);
-  }
+    for &s in &[Severity::High, Severity::Medium, Severity::Low] {
+        let db = s.as_db_str();
+        assert!(matches!(db, "HIGH" | "MEDIUM" | "LOW"));
+
+        assert_eq!(db.parse::<Severity>().unwrap(), s);
+        assert_eq!(db.to_lowercase().parse::<Severity>().unwrap(), s);
+    }
 }
 
 #[test]
 fn severity_display_contains_uppercase_name() {
-  assert!(Severity::High.to_string().contains("HIGH"));
-  assert!(Severity::Medium.to_string().contains("MEDIUM"));
-  assert!(Severity::Low.to_string().contains("LOW"));
+    assert!(Severity::High.to_string().contains("HIGH"));
+    assert!(Severity::Medium.to_string().contains("MEDIUM"));
+    assert!(Severity::Low.to_string().contains("LOW"));
 }
 
 #[test]
 fn load_returns_correct_pattern_slices() {
-  let rust = load("rust");
-  assert!(!rust.is_empty(), "Rust patterns should be loaded");
+    let rust = load("rust");
+    assert!(!rust.is_empty(), "Rust patterns should be loaded");
 
-  let ts   = load("typescript");
-  let tsx  = load("tsx");
-  assert_eq!(ts, tsx, "alias ‘tsx’ must map to TypeScript patterns");
-  
-  assert_eq!(load("RUST"), rust);
-  
-  assert!(load("brainfuck").is_empty());
+    let ts = load("typescript");
+    let tsx = load("tsx");
+    assert_eq!(ts, tsx, "alias ‘tsx’ must map to TypeScript patterns");
+
+    assert_eq!(load("RUST"), rust);
+
+    assert!(load("brainfuck").is_empty());
 }

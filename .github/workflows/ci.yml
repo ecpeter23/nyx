@@ -2,22 +2,37 @@ name: CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [main]
   pull_request:
-    branches: [ "master" ]
-
-env:
-  CARGO_TERM_COLOR: always
+    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta]
     steps:
-    - uses: actions/checkout@v4
-    - uses: Swatinem/rust-cache@v2
-    - name: Build
-      run: cargo build
-    - name: Run linter
-      run: cargo clippy --all-targets --all-features -- -D warnings
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Lint (Clippy)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build & Test
+        run: cargo test --all-features --verbose
+
+      - name: Security audit
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: License & advisory checks
+        uses: EmbarkStudios/cargo-deny-action@v2
