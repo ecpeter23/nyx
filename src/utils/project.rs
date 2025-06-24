@@ -47,7 +47,7 @@ fn sanitize_project_name_is_idempotent_and_lossless_enough() {
 }
 
 #[test]
-fn get_project_info_uses_sanitised_name_in_sqlite_path() {
+fn get_project_info_uses_sanitized_name_in_sqlite_path() {
   let tmp = tempfile::tempdir().unwrap();
   let root = tmp.path();
   
