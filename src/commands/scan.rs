@@ -162,7 +162,6 @@ pub fn scan_with_index_parallel(
     if let Some(max) = cfg.output.max_results {
         diags.truncate(max as usize);
     }
-
-    // Flatten
+  
     Ok(diags)
 }
