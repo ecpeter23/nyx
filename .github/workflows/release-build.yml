@@ -46,14 +46,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN_PATH=target/${{ matrix.target }}/release/${{ env.BIN_NAME }}$([[ "${{ matrix.target }}" == *windows* ]] && echo ".exe")
+          BIN=${{ env.BIN_NAME }}
+          TARGET=${{ matrix.target }}
+          EXT=$([[ "$TARGET" == *windows* ]] && echo ".exe" || echo "")
+          BIN_PATH=target/$TARGET/release/$BIN$EXT
           if [[ ! -f "$BIN_PATH" ]]; then
-            echo "::error ::expected binary not found"; ls -l target/${{ matrix.target }}/release; exit 1
-          fi
+            echo "::error ::Binary $BIN_PATH not found"
+            ls -R target/$TARGET/release || true
+            exit 1
+          fi          
           mkdir -p dist
-          ARCHIVE=${{ env.BIN_NAME }}-${{ matrix.target }}.zip
+          ARCHIVE=$BIN-$TARGET.zip
           zip -9 "dist/$ARCHIVE" "$BIN_PATH"
-          echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV" 
+          echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload to the release
         uses: softprops/action-gh-release@v2
