@@ -103,7 +103,12 @@ fn scan_filesystem(root: &Path, cfg: &Config) -> NyxResult<Vec<Diag>> {
         Ok::<(), DynError>(())
     })?;
 
-    Ok(acc.into_inner()?)
+    let mut diags = acc.into_inner()?;
+    if let Some(max) = cfg.output.max_results {
+      diags.truncate(max as usize);
+    }
+  
+    Ok(diags)
 }
 
 pub fn scan_with_index_parallel(
@@ -115,12 +120,10 @@ pub fn scan_with_index_parallel(
         let idx = Indexer::from_pool(project, &pool)?;
         idx.get_files(project)?
     };
-
-    // ① Collect per-path Vec<Diag> without a global mutex
+  
     let diag_map: DashMap<String, Vec<Diag>> = DashMap::new();
 
     files.into_par_iter().for_each_init(
-        // ② A single Indexer per Rayon worker thread
         || Indexer::from_pool(project, &pool).expect("db pool"),
         |idx, path| {
             let needs_scan = idx.should_scan(&path).unwrap_or(true);
@@ -153,8 +156,7 @@ pub fn scan_with_index_parallel(
 
     // Optional, heavy: only vacuum on --rebuild-index
     // if rebuild { idx.vacuum()?; }
-
-    // flatten
+  
     let mut diags: Vec<Diag> = diag_map.into_iter().flat_map(|(_, v)| v).collect();
 
     if let Some(max) = cfg.output.max_results {
