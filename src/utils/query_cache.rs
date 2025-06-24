@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
-
-use once_cell::sync::Lazy;
+use std::sync::{Arc, LazyLock, RwLock};
 use tree_sitter::{Language, Query};
 
 use crate::patterns::{self, Pattern};
@@ -9,11 +7,12 @@ use crate::patterns::{self, Pattern};
 #[derive(Clone)]
 pub struct CompiledQuery {
   pub meta:  Pattern,
-  pub query: std::sync::Arc<Query>,
+  pub query: Arc<Query>,
 }
 
-static CACHE: Lazy<RwLock<HashMap<&'static str, std::sync::Arc<Vec<CompiledQuery>>>>> =
-  Lazy::new(|| RwLock::new(HashMap::new()));
+type QuerySet = Arc<Vec<CompiledQuery>>;
+static CACHE: LazyLock<RwLock<HashMap<&'static str, QuerySet>>> =
+  LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Return **one shared Arc** to the per-language query set.
 /// Cloning the `Arc` is O(1) and the underlying Vec lives for the
@@ -37,7 +36,7 @@ pub fn for_lang(lang: &'static str, ts_lang: Language) -> std::sync::Arc<Vec<Com
   }).collect();
 
   let compiled = std::sync::Arc::new(compiled);
-  
+
   let mut w = CACHE.write().unwrap();
   w.entry(lang).or_insert_with(|| compiled.clone()).clone()
 }

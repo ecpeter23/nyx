@@ -61,7 +61,7 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
     let root        = root.to_path_buf();
     let scan_hidden = cfg.scanner.scan_hidden_files;
     let follow      = cfg.scanner.follow_symlinks;
-    let max_bytes   = cfg.scanner.max_file_size_mb.unwrap_or(0) as u64 * 1_048_576;
+    let max_bytes   = cfg.scanner.max_file_size_mb.unwrap_or(0) * 1_048_576;
 
     // ----- 3  the background walker thread ---------------------------------
     thread::spawn(move || {
@@ -94,7 +94,7 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
                           _ => {}
                       }
                   }
-                  
+
                   tracing::debug!("sending {:?}", entry);
                   b.push(entry.into_path());
                   WalkState::Continue
