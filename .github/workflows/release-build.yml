@@ -20,7 +20,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
           - target: x86_64-apple-darwin
-            os: macos-14 
+            os: macos-14
           - target: aarch64-apple-darwin
             os: macos-14
     runs-on: ${{ matrix.os }}
@@ -35,12 +35,18 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           cache: true
-          
+
       - name: Install target
         run: rustup target add ${{ matrix.target }}
 
       - name: Build
         run: cargo build --release --bin ${{ env.BIN_NAME }} --target ${{ matrix.target }}
+
+      - name: Install cargo-about
+        run: cargo install cargo-about --locked
+
+      - name: Generate licence bundle
+        run: cargo about generate --format html > THIRDPARTY-LICENSES.html
 
       - name: Package
         shell: bash
@@ -57,7 +63,7 @@ jobs:
           fi          
           mkdir -p dist
           ARCHIVE=$BIN-$TARGET.zip
-          zip -9 "dist/$ARCHIVE" "$BIN_PATH"
+          zip -9 "dist/$ARCHIVE" "$BIN_PATH" THIRDPARTY-LICENSES.html LICENSE* COPYING* || true
           echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload to the release
