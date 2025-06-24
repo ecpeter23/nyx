@@ -20,6 +20,19 @@
 
 ---
 
+## Why choose Nyx?
+
+| Advantage                      | What it means for you                                                                                                                                                        |
+|--------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Pure-Rust, single binary**   | No JVM, Python, or server to install; drop the `nyx` executable into your `$PATH` and go.                                                                                    |
+| **Massively parallel**         | Uses Rayon and a thread-pool walker; scales to all CPU cores. Example: scanning the entire **rust-lang/rust** codebase (~53,000 files) on an M2 MacBook Pro takes **≈ 1 s**. |
+| **Index-aware**                | An optional SQLite index stores file hashes and findings, subsequent scans touch *only* changed files, slashing CI times.                                                    |
+| **Offline & privacy-friendly** | Requires no login, cloud account, or telemetry. Perfect for air-gapped environments and strict compliance policies.                                                          |
+| **Tree-sitter precision**      | Parses real language grammars, not regexes, giving far fewer false positives than line-based scanners.                                                                       |
+| **Extensible**                 | Add new patterns with concise `tree-sitter` queries; no SaaS lock-in.                                                                                                        |
+
+---
+
 ## Installation
 
 ### Build from source
@@ -114,12 +127,13 @@ A fully documented `nyx.conf` is generated automatically on first run.
 
 ## Roadmap
 
-| Area                   | Planned Improvements                                                      |
-|------------------------|---------------------------------------------------------------------------|
-| Control‑flow analysis  | Generation of CFGs for deeper reasoning about execution paths             |
-| Taint tracking         | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks |
-| Output formats         | Full SARIF 2.1.0, JUnit XML, HTML report generator                        |
-| Rule updates           | Remote rule feed with signature verification                              |
+| Area                  | Planned Improvements                                                      |
+|-----------------------|---------------------------------------------------------------------------|
+| More language support | Plans to create rule sets for over 100 languages for maximum coverage     |
+| Control‑flow analysis | Generation of CFGs for deeper reasoning about execution paths             |
+| Taint tracking        | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks |
+| Output formats        | Full SARIF 2.1.0, JUnit XML, HTML report generator                        |
+| Rule updates          | Remote rule feed with signature verification                              |
 
 Community feedback will help shape priorities; please open an issue to discuss proposed changes.
 
