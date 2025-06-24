@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use std::collections::BTreeMap;
 use dashmap::DashMap;
 use crate::errors::NyxResult;
-pub(crate) use crate::file::run_rules_on_file;
+pub(crate) use crate::ast::run_rules_on_file;
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
 

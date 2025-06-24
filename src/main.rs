@@ -5,7 +5,7 @@ mod walk;
 mod database;
 mod patterns;
 mod errors;
-mod file;
+mod ast;
 
 use crate::utils::Config;
 use cli::Cli;
