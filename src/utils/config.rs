@@ -282,3 +282,42 @@ fn merge_configs(mut default: Config, user: Config) -> Config {
 
     default
 }
+
+#[test]
+fn merge_configs_dedupes_and_keeps_order() {
+  let mut default_cfg = Config::default();
+  default_cfg.scanner.excluded_extensions = vec!["rs".into(), "toml".into()];
+
+  let mut user_cfg = Config::default();
+  user_cfg.scanner.excluded_extensions = vec!["jpg".into(), "rs".into()];
+
+  let merged = merge_configs(default_cfg, user_cfg);
+  
+  assert_eq!(merged.scanner.excluded_extensions, vec!["jpg", "rs", "toml"]);
+}
+
+#[test]
+fn load_creates_example_and_reads_user_overrides() {
+  let cfg_dir = tempfile::tempdir().unwrap();
+  let cfg_path = cfg_dir.path();
+  
+  let user_toml = r#"
+        [scanner]
+        one_file_system = true
+        excluded_extensions = ["foo"]
+
+        [output]
+        quiet = true
+    "#;
+  fs::write(cfg_path.join("nyx.local"), user_toml).unwrap();
+
+  let cfg = Config::load(cfg_path).expect("Config::load should succeed");
+
+  assert!(cfg_path.join("nyx.conf").is_file());
+  
+  assert!(cfg.scanner.one_file_system);
+  assert!(cfg.output.quiet);
+  assert!(cfg.scanner.excluded_extensions.contains(&"foo".to_string()));
+  
+  assert_eq!(cfg.scanner.follow_symlinks, false);
+}
