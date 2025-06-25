@@ -46,7 +46,7 @@ jobs:
         run: cargo install cargo-about --locked
 
       - name: Generate license bundle
-        run: cargo about generate --format handlebars > THIRDPARTY-LICENSES.html
+        run: cargo about generate about.hbs > THIRDPARTY-LICENSES.html
 
       - name: Package
         shell: bash
