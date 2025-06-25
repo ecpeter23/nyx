@@ -68,7 +68,7 @@ pub fn handle(
             println!("{}", style(path).blue().underlined());
             for d in issues {
                 println!(
-                    "  {:>4}:{:<4}  [{}]  {}",
+                    "  {:>4}:{:<4}  [{:}]  {:}",
                     d.line,
                     d.col,
                     d.severity,
