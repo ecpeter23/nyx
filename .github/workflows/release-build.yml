@@ -48,7 +48,8 @@ jobs:
       - name: Generate license bundle
         run: cargo about generate about.hbs -o THIRDPARTY-LICENSES.html
 
-      - name: Package
+      - name: Package (Linux & macOS)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -56,15 +57,29 @@ jobs:
           TARGET=${{ matrix.target }}
           EXT=$([[ "$TARGET" == *windows* ]] && echo ".exe" || echo "")
           BIN_PATH=target/$TARGET/release/$BIN$EXT
-          if [[ ! -f "$BIN_PATH" ]]; then
-            echo "::error ::Binary $BIN_PATH not found"
-            ls -R target/$TARGET/release || true
-            exit 1
-          fi          
           mkdir -p dist
           ARCHIVE=$BIN-$TARGET.zip
-          zip -9 "dist/$ARCHIVE" "$BIN_PATH" THIRDPARTY-LICENSES.html LICENSE* COPYING* || true
+          zip -9 "dist/$ARCHIVE" "$BIN_PATH" THIRDPARTY-LICENSES.html LICENSE* COPYING*
           echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Bin      = '${{ env.BIN_NAME }}'
+          $Target   = '${{ matrix.target }}'
+          $Ext      = '.exe'
+          $BinPath  = "target/$Target/release/$Bin$Ext"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $Archive  = "$Bin-$Target.zip"
+
+          # PowerShell’s native ZIP
+          Compress-Archive `
+              -Path $BinPath, 'THIRDPARTY-LICENSES.html', 'LICENSE*', 'COPYING*' `
+              -DestinationPath "dist/$Archive" `
+              -CompressionLevel Optimal
+
+          Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$Archive"
 
       - name: Upload to the release
         uses: softprops/action-gh-release@v2
