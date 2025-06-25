@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="assets/logo.png" alt="nyx logo" width="200"/>
+  <img src="assets/logo.png" alt="nyx logo" width="300"/>
 
 # Nyx
 
 **Fast, cross-language cli vulnerability scanner.**
 
 [![crates.io](https://img.shields.io/crates/v/nyx-scanner.svg)](https://crates.io/crates/nyx-scanner)
-[![license](https://img.shields.io/crates/l/nyx-scanner.svg)](https://github.com/ecpeter23/nyx/blob/main/LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/ecpeter23/nyx/ci.yml?branch=master)](https://github.com/ecpeter23/nyx/actions)
 </div>
@@ -169,4 +169,8 @@ See `CONTRIBUTING.md` for full guidelines.
 
 ## License
 
-Nyx is dual‑licensed under **Apache‑2.0** and **MIT**. You may choose either license.
+Nyx is licensed under the **GNU General Public License v3.0 (GPL‑3.0)**.
+
+This ensures that all modified versions of the scanner remain free and open-source, protecting the integrity and transparency of security tools.
+
+See [LICENSE](./LICENSE) for full details.

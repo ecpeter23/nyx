@@ -8,5 +8,6 @@ allow = [
     "Unlicense",
     "Zlib",
     "CC0-1.0",
-    "MPL-2.0"
+    "MPL-2.0",
+    "GPL-3.0",
 ]
