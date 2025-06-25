@@ -11,6 +11,7 @@ documentation = "https://github.com/ecpeter23/nyx#readme"
 keywords = ["security", "vulnerability", "scanner", "cli", "automation"]
 categories = ["command-line-utilities", "development-tools" ]
 readme = "README.md"
+default-run = "nyx"
 exclude = [
     "assets/",
     ".github/",
