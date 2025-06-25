@@ -169,4 +169,8 @@ See `CONTRIBUTING.md` for full guidelines.
 
 ## License
 
-Nyx is dual‑licensed under **Apache‑2.0** and **MIT**. You may choose either license.
+Nyx is licensed under the **GNU General Public License v3.0 or later (GPL‑3.0‑or‑later)**.
+
+This ensures that all modified versions of the scanner remain free and open-source, protecting the integrity and transparency of security tools.
+
+See [LICENSE](./LICENSE) for full details.
