@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo.png" alt="nyx logo" width="200"/>
+  <img src="assets/logo.png" alt="nyx logo" width="300"/>
 
 # Nyx
 
@@ -169,7 +169,7 @@ See `CONTRIBUTING.md` for full guidelines.
 
 ## License
 
-Nyx is licensed under the **GNU General Public License v3.0 or later (GPL‑3.0‑or‑later)**.
+Nyx is licensed under the **GNU General Public License v3.0 (GPL‑3.0)**.
 
 This ensures that all modified versions of the scanner remain free and open-source, protecting the integrity and transparency of security tools.
 
