@@ -6,6 +6,7 @@ mod errors;
 mod patterns;
 mod utils;
 mod walk;
+mod cfg;
 
 use crate::errors::NyxResult;
 use crate::utils::Config;

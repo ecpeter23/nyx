@@ -5,6 +5,7 @@ use crate::utils::{Config, query_cache};
 use std::cell::RefCell;
 use std::path::Path;
 use tree_sitter::{Language, QueryCursor, StreamingIterator};
+use crate::cfg::{analyse_function, build_cfg};
 
 thread_local! {
     static PARSER: RefCell<tree_sitter::Parser> = RefCell::new(tree_sitter::Parser::new());
@@ -47,30 +48,39 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
             .ok_or_else(|| NyxError::Other("tree-sitter failed".into()))
     })?;
 
-    let root = _tree.root_node();
-
-    let compiled = query_cache::for_lang(lang_slug, ts_lang);
-    let mut cursor = QueryCursor::new();
-    let mut out = Vec::new();
-
-    for cq in compiled.iter() {
-        if cfg.scanner.min_severity <= cq.meta.severity {
-            continue;
-        }
-        let mut matches = cursor.matches(&cq.query, root, &*bytes);
-        while let Some(m) = matches.next() {
-            if let Some(cap) = m.captures.iter().find(|c| c.index == 0) {
-                let point = cap.node.start_position();
-                out.push(Diag {
-                    path: path.to_string_lossy().into_owned(),
-                    line: point.row + 1,
-                    col: point.column + 1,
-                    severity: cq.meta.severity,
-                    id: cq.meta.id.to_owned(),
-                });
-            }
-        }
+    // TODO: REMOVE DEBUG CODE
+    let out = Vec::new();
+    let cfg = build_cfg(&_tree, &*bytes);
+    for p in analyse_function(&cfg, entry) {
+        let first = cfg[p.first().copied().unwrap()].span().0;
+        let last  = cfg[p.last().copied().unwrap()].span.1;
+        println!("❗ possible injection from byte {first} to {last}");
     }
+
+    // let root = _tree.root_node();
+    // 
+    // let compiled = query_cache::for_lang(lang_slug, ts_lang);
+    // let mut cursor = QueryCursor::new();
+    // let mut out = Vec::new();
+    // 
+    // for cq in compiled.iter() {
+    //     if cfg.scanner.min_severity <= cq.meta.severity {
+    //         continue;
+    //     }
+    //     let mut matches = cursor.matches(&cq.query, root, &*bytes);
+    //     while let Some(m) = matches.next() {
+    //         if let Some(cap) = m.captures.iter().find(|c| c.index == 0) {
+    //             let point = cap.node.start_position();
+    //             out.push(Diag {
+    //                 path: path.to_string_lossy().into_owned(),
+    //                 line: point.row + 1,
+    //                 col: point.column + 1,
+    //                 severity: cq.meta.severity,
+    //                 id: cq.meta.id.to_owned(),
+    //             });
+    //         }
+    //     }
+    // }
     Ok(out)
 }
 

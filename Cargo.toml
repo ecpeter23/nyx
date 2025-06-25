@@ -56,3 +56,4 @@ bytesize  = "2.0.1"
 chrono    = { version = "0.4.41", default-features = false, features = ["std", "clock"] }
 thiserror = "2.0.12"
 dashmap = "7.0.0-rc2"
+petgraph = "0.8.2"
