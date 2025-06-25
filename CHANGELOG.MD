@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Fixed a bug in the pipeline where windows was trying to call the zip, powershell doesn't have a zip command
+- Fixed a bug in the release pipeline where windows was trying to call the zip, powershell doesn't have a zip command
 
 ## [0.1.1] - 2025-06-25
 
