@@ -5,7 +5,7 @@ use crate::cfg::DataLabel;
 
 /// A single rule: if the AST text equals (or ends with) one of the `matchers`,
 /// the node gets `label`.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LabelRule {
   pub matchers: &'static [&'static str],
   pub label:    DataLabel<'static>,
@@ -16,16 +16,12 @@ pub struct LabelRule {
 pub mod rust {
   use super::*;
   pub static RULES: &[LabelRule] = &[
-    // std::env::var::<..>() is an untrusted string source
-    LabelRule { matchers: &["std::env::var", "env::var", "var"], 
+    LabelRule { matchers: &["std::env::var", "env::var"],    
       label: DataLabel::Source("env-var") },
-    // html_escape::encode_* acts as sanitizer
-    LabelRule { matchers: &["html_escape::encode_safe"], label: DataLabel::Sanitizer("html-escape") },
-    // std::process::Command::arg is a dangerous sink
-    LabelRule {
-      matchers: &["arg"],
-      label:    DataLabel::Sink("process-spawn"),
-    }
+    LabelRule { matchers: &["html_escape::encode_safe"],    
+      label: DataLabel::Sanitizer("html-escape") },
+    LabelRule { matchers: &["arg"],
+      label: DataLabel::Sink("process-spawn") },
   ];
 }
 
@@ -65,9 +61,20 @@ pub fn classify<'a>(lang: &str, text: &str) -> Option<DataLabel<'a>> {
   let text_lc = head.trim().to_ascii_lowercase();
 
   for rule in *rules {
-    if rule.matchers.iter().any(|m| text_lc.ends_with(m) || text_lc.contains(m)) {
-      return Some(unsafe { std::mem::transmute(rule.label.clone()) });
+    for raw in rule.matchers {
+      let m = raw.to_ascii_lowercase();
+
+      if text_lc.ends_with(&m) {
+        let start = text_lc.len() - m.len();     
+        let ok = start == 0              
+          || matches!(text_lc.as_bytes()[start - 1], b'.' | b':');
+
+        if ok {
+          return Some(rule.label);     
+        }
+      }
     }
-  }
+}
   None
 }
+

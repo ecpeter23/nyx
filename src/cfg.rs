@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use petgraph::algo::dominators::{simple_fast, Dominators};
 use petgraph::prelude::*;
-use tree_sitter::{Node, Tree};
+use tree_sitter::{Language, Node, Tree};
 
 /// Kinds of statements we care about.
 #[derive(Debug, Clone, Copy)]
@@ -15,7 +15,7 @@ pub enum EdgeKind {
 }
 
 /// Taint metadata (optional on every node).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataLabel<'a> {
   Source(&'a str),
   Sanitizer(&'a str),
@@ -41,7 +41,6 @@ pub fn push_node<'a>(
   lang:  &str,
   code:  &'a [u8],
 ) -> NodeIndex {
-  // --- NEW: get the *callee* instead of the whole expression ----------
   let text = match ast.kind() {
     "call_expression" => {
       ast.child_by_field_name("function")
@@ -49,15 +48,14 @@ pub fn push_node<'a>(
         .and_then(|s| std::str::from_utf8(s).ok())
         .unwrap_or_default()
     }
-    // e.g. .arg(user_input)
     "method_call_expression" => {
-      ast.child_by_field_name("name")
+      ast.child_by_field_name("method") 
+        .or_else(|| ast.child_by_field_name("name"))
         .and_then(|n| Some(&code[n.start_byte()..n.end_byte()]))
         .and_then(|s| std::str::from_utf8(s).ok())
         .unwrap_or_default()
     }
     _ => {
-      // fall back to the original behaviour
       let span = (ast.start_byte(), ast.end_byte());
       std::str::from_utf8(&code[span.0..span.1]).unwrap_or_default()
     }
@@ -65,16 +63,18 @@ pub fn push_node<'a>(
 
   let span  = (ast.start_byte(), ast.end_byte());
   let label = crate::labels::classify(lang, text);
-
+  
   if !matches!(ast.kind(), "call_expression" | "method_call_expression") {
     return g.add_node(NodeInfo { kind, span, label: None });
   }
-  
   g.add_node(NodeInfo { kind, span, label })
 }
 
+
 /// Build an intraprocedural CFG and return (graph, entry_node).
 pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<'a>, NodeIndex) {
+  tracing::debug!("Building CFG for {}", &tree.root_node() );
+  
   let mut g: Cfg<'a> = Graph::with_capacity(128, 256);
   let entry = g.add_node(NodeInfo { kind: StmtKind::Entry,  span: (0, 0),             label: None });
   let exit  = g.add_node(NodeInfo { kind: StmtKind::Exit,   span: (code.len(), code.len()), label: None });
@@ -83,13 +83,33 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<
   let mut stack = vec![(tree.root_node(), entry)];
   while let Some((ts_node, prev)) = stack.pop() {
     match ts_node.kind() {
-      "if_expression" => { /* exactly the same body as before */ }
-      "while_statement" | "for_statement" => { /* same */ }
+      "if_expression" => { // TODO: MAKE SURE THIS WORKS
+        let node = push_node(&mut g, StmtKind::If, ts_node, lang, code);
+        g.add_edge(prev, node, EdgeKind::Seq); 
+        g.add_edge(node, prev, EdgeKind::Seq);
+        
+        let mut cursor = ts_node.walk();
+        let children: Vec<_> = ts_node.children(&mut cursor).collect();
+        for child in children.into_iter().rev() {
+          stack.push((child, node));
+        }
+      }
+      "while_statement" | "for_statement" => {  // TODO: MAKE SURE THIS WORKS
+        let node = push_node(&mut g, StmtKind::Loop, ts_node, lang, code);
+        g.add_edge(prev, node, EdgeKind::Seq); 
+        g.add_edge(node, prev, EdgeKind::Seq);
+        
+        let mut cursor = ts_node.walk();
+        let children: Vec<_> = ts_node.children(&mut cursor).collect();
+        for child in children.into_iter().rev() {
+          stack.push((child, node));
+        }
+      }
       _ => {
         let node = push_node(&mut g, StmtKind::Seq, ts_node, lang, code);
-        g.add_edge(prev, node, EdgeKind::Seq);
-
-        // push children **in reverse** so they’re visited in source order
+        g.add_edge(prev, node, EdgeKind::Seq); 
+        g.add_edge(node, prev, EdgeKind::Seq);
+        
         let mut cursor = ts_node.walk();
         let children: Vec<_> = ts_node.children(&mut cursor).collect();
         for child in children.into_iter().rev() {
@@ -98,7 +118,7 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<
       }
     }
   }
-  g.add_edge(entry, exit, EdgeKind::Seq); // or keep your original tail logic
+  g.add_edge(entry, exit, EdgeKind::Seq);
   (g, entry)
 }
 
@@ -197,4 +217,23 @@ pub fn analyse_function(
     tainted,
     |n| matches!(cfg[n].label, Some(DataLabel::Sanitizer(_))),
   )
+}
+
+#[test]
+fn env_to_arg_is_flagged() {
+  let src = br#"
+        use std::env; use std::process::Command;
+        fn main() {
+            let x = env::var("DANGEROUS_ARG").unwrap();
+            Command::new("sh").arg(x).status().unwrap();
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+
+  assert_eq!(findings.len(), 1);  // exactly one unsanitised Source→Sink
 }
