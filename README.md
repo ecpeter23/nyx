@@ -1,6 +1,22 @@
+<div align="center">
+  <img src="assets/logo.png" alt="nyx logo" width="200"/>
+
 # Nyx
 
-**Nyx** is a lightweight, Rust‑native command‑line tool that detects potentially dangerous code patterns across several programming languages. It combines the accuracy of [`tree‑sitter`](https://tree-sitter.github.io/) parsing with a curated rule set and an optional SQLite‑backed index to deliver fast, repeatable scans on projects of any size.
+**Fast, cross-language cli vulnerability scanner.**
+
+[![release](https://img.shields.io/github/v/release/ecpeter23/nyx?style=flat-square)](https://github.com/ecpeter23/nyx/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![CI](https://img.shields.io/github/actions/workflow/status/ecpeter23/nyx/ci.yml?branch=master)](https://github.com/ecpeter23/nyx/actions)
+</div>
+
+---
+
+## What is Nyx?
+
+**Nyx** is a lightweight lightning-fast Rust‑native command‑line tool that detects potentially dangerous code patterns across several programming languages. It combines the accuracy of [`tree‑sitter`](https://tree-sitter.github.io/) parsing with a curated rule set and an optional SQLite‑backed index to deliver fast, repeatable scans on projects of any size.
 
 > **Project status – Alpha**   
 > Nyx is under active development. The public interface, rule set, and output formats may change without notice while we stabilize the core. Please pin exact versions in production environments.

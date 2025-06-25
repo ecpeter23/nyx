@@ -1,8 +1,20 @@
 [package]
-name = "nyx"
-version = "0.1.0"
+name = "nyx-scanner"
+version = "0.1.1"
 edition = "2024"
+description = "A CLI security scanner for automating vulnerability checks"
 license = "MIT OR Apache-2.0"
+authors = ["Eli Peter <elicpeter@gmail.com>"]
+homepage = "https://github.com/ecpeter23/nyx"
+repository = "https://github.com/ecpeter23/nyx"
+documentation = "https://github.com/ecpeter23/nyx#readme"
+keywords = ["security", "vulnerability", "scanner", "cli", "automation"]
+categories = ["command-line-utilities", "development-tools" ]
+readme = "README.md"
+exclude = [
+    "assets/",
+    ".github/",
+]
 
 [dev-dependencies]
 tempfile = "3"
