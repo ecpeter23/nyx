@@ -6,7 +6,7 @@
 **Fast, cross-language cli vulnerability scanner.**
 
 [![crates.io](https://img.shields.io/crates/v/nyx-scanner.svg)](https://crates.io/crates/nyx-scanner)
-[![license](https://img.shields.io/crates/l/nyx-scanner.svg)](https://github.com/ecpeter23/nyx/blob/main/LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/ecpeter23/nyx/ci.yml?branch=master)](https://github.com/ecpeter23/nyx/actions)
 </div>
