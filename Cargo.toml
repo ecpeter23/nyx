@@ -16,6 +16,10 @@ exclude = [
     ".github/",
 ]
 
+[[bin]]
+name = "nyx"
+path = "src/main.rs"
+
 [dev-dependencies]
 tempfile = "3"
 
