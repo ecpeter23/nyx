@@ -50,6 +50,13 @@ pub type Cfg<'a> = Graph<NodeInfo<'a>, EdgeKind>;
 //                      Utility helpers
 // -------------------------------------------------------------------------
 
+#[inline]
+fn text_of<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
+  std::str::from_utf8(&code[n.start_byte()..n.end_byte()])
+      .ok()
+      .map(|s| s.to_string())
+}
+
 /// Create a node in one short borrow and optionally attach a taint label.
 fn push_node<'a>(
   g:    &mut Cfg<'a>,
@@ -62,19 +69,31 @@ fn push_node<'a>(
   let text = match ast.kind() {
     "call_expression" => ast
         .child_by_field_name("function")
-        .and_then(|n| std::str::from_utf8(&code[n.start_byte()..n.end_byte()]).ok()),
-    "method_call_expression" => ast
-        .child_by_field_name("method")
-        .or_else(|| ast.child_by_field_name("name"))
-        .and_then(|n| std::str::from_utf8(&code[n.start_byte()..n.end_byte()]).ok()),
+        .and_then(|n| text_of(n, code)),
+    "method_call_expression" => {
+      let func  = ast.child_by_field_name("method")
+          .or_else(|| ast.child_by_field_name("name"))
+          .and_then(|n| text_of(n, code));
+      let recv  = ast.child_by_field_name("object")
+          .and_then(|n| text_of(n, code));
+      match (recv, func) {
+        (Some(r), Some(f)) => Some(format!("{r}::{f}")),
+        (_,      Some(f))  => Some(f.to_string()),
+        _                  => None,
+      }
+    }
     "macro_invocation" => ast
         .child_by_field_name("macro")
-        .and_then(|n| std::str::from_utf8(&code[n.start_byte()..n.end_byte()]).ok()),
-    _ => Some(std::str::from_utf8(&code[ast.start_byte()..ast.end_byte()]).unwrap_or_default()),
+        .and_then(|n| text_of(n, code)),
+    _ => Some(
+      std::str::from_utf8(&code[ast.start_byte()..ast.end_byte()])
+          .unwrap_or_default()
+          .to_string(),
+    ),
   }
       .unwrap_or_default();
 
-  let label = crate::labels::classify(lang, text);
+  let label = crate::labels::classify(lang, text.as_str());
   let span  = (ast.start_byte(), ast.end_byte());
 
   let idx = g.add_node(NodeInfo { kind, span, label });
@@ -240,9 +259,12 @@ fn build_sub<'a>(
     }
 
     // Trivia we drop completely ---------------------------------------------
-    "line_comment" | "block_comment" | ";" | "," | "(" | ")" | "{" | "}" | "\n" => {
-      preds.to_vec()
-    }
+    "line_comment" | "block_comment"
+    | ";" | "," | "(" | ")" | "{" | "}" | "\n"
+    | "use_declaration"     
+    | "attribute_item"          
+    | "mod_item" | "type_item" 
+    => preds.to_vec(),
 
     // ─────────────────────────────────────────────────────────────────
     //  Every other node = simple sequential statement
@@ -291,7 +313,7 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<
 
   debug!(target: "cfg", "CFG DONE — nodes: {}, edges: {}", g.node_count(), g.edge_count());
 
-  if true {
+  if cfg!(debug_assertions) {
     // List every node
     for idx in g.node_indices() {
       debug!(target: "cfg", "  node {:>3}: {:?}", idx.index(), g[idx]);

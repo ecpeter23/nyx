@@ -15,13 +15,36 @@ pub struct LabelRule {
 
 pub mod rust {
   use super::*;
+
+  ///   • `Source`  = untrusted data entering the program  
+  ///   • `Sink`    = potentially dangerous APIs that consume that data  
+  ///   • `Sanitizer` = escapes / validators that make data safe
   pub static RULES: &[LabelRule] = &[
-    LabelRule { matchers: &["std::env::var", "env::var"],    
-      label: DataLabel::Source("env-var") },
-    LabelRule { matchers: &["html_escape::encode_safe"],    
-      label: DataLabel::Sanitizer("html-escape") },
-    LabelRule { matchers: &["arg"],
-      label: DataLabel::Sink("process-spawn") },
+    // ─────────── Sources ───────────
+    LabelRule {
+      matchers: &["std::env::var", "env::var"],
+      label:    DataLabel::Source("env-var"),
+    },
+
+    // ───────── Sanitizers ──────────
+    LabelRule {
+      matchers: &["html_escape::encode_safe"],
+      label:    DataLabel::Sanitizer("html-escape"),
+    },
+
+    // ─────────── Sinks ─────────────
+    //  All the key points where untrusted strings reach the OS shell.
+    LabelRule {
+      matchers: &[
+        "command::new",
+        "std::process::command::new",
+        "command::arg",
+        "command::args",
+        "command::status",
+        "command::output",
+      ],
+      label:    DataLabel::Sink("process-spawn"),
+    },
   ];
 }
 
