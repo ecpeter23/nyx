@@ -15,7 +15,7 @@ thread_local! {
 /// Convenience alias for node indices.
 fn byte_offset_to_point(tree: &tree_sitter::Tree, byte: usize) -> tree_sitter::Point {
   // `descendant_for_byte_range` gives us *some* node that starts at `byte`,
-  // `start_position` turns that into rows & columns (both 0-based) 
+  // `start_position` turns that into rows & columns (both 0-based)
   tree.root_node()
     .descendant_for_byte_range(byte, byte)
     .map(|n| n.start_position())
@@ -68,9 +68,9 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
       
       out.push(Diag {
           path:     path.to_string_lossy().into_owned(),
-          line:     point.row + 1,               // 1-based for humans
+          line:     point.row + 1,     
           col:      point.column + 1,
-          severity: Severity::High,              // pick your poison
+          severity: Severity::High,              
           id:       "taint-unsanitised-flow".into(),
      });
      }
