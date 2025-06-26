@@ -25,11 +25,20 @@ pub mod rust {
       matchers: &["std::env::var", "env::var"],
       label:    DataLabel::Source("env-var"),
     },
+    LabelRule {
+      matchers: &["source_", "source_env", "source_file"],
+      label:    DataLabel::Source("wrapper"),
+    },
 
     // ───────── Sanitizers ──────────
+      // `fn sanitize_*(&str) -> String`
     LabelRule {
-      matchers: &["html_escape::encode_safe"],
+      matchers: &["html_escape::encode_safe", "sanitize_", "sanitize_html"],
       label:    DataLabel::Sanitizer("html-escape"),
+    },
+    LabelRule {                          
+      matchers: &["shell_escape::unix::escape"],
+      label:    DataLabel::Sanitizer("shell-escape"),
     },
 
     // ─────────── Sinks ─────────────
@@ -44,6 +53,10 @@ pub mod rust {
         "command::output",
       ],
       label:    DataLabel::Sink("process-spawn"),
+    },
+    LabelRule {
+      matchers: &["sink_"],
+      label:    DataLabel::Sink("wrapper"),
     },
   ];
 }

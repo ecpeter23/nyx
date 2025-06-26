@@ -5,11 +5,13 @@ use tree_sitter::{Node, Tree};
 use tracing::debug;
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// -------------------------------------------------------------------------
 ///  Public AST‑to‑CFG data structures
 /// -------------------------------------------------------------------------
 #[derive(Debug, Clone, Copy)]
+#[derive(PartialEq)]
 pub enum StmtKind {
   Entry,
   Exit,
@@ -43,6 +45,8 @@ pub struct NodeInfo<'a> {
   pub kind:  StmtKind,
   pub span:  (usize, usize),      // byte offsets in the original file
   pub label: Option<DataLabel<'a>>, // taint classification if any
+  pub defines:  Option<String>,   // variable written by this stmt
+  pub uses:     Vec<String>,      // variables read
 }
 
 pub type Cfg<'a> = Graph<NodeInfo<'a>, EdgeKind>;
@@ -151,7 +155,13 @@ fn push_node<'a>(
 
   /* ── 3.  GRAPH INSERTION + DEBUG ──────────────────────────────────── */
 
-  let idx = g.add_node(NodeInfo { kind, span, label });
+  let (defines, uses) = def_use(ast, code);
+
+  let idx = g.add_node(NodeInfo {
+    kind, span, label,
+    defines,
+    uses,
+  });
 
   debug!(
         target: "cfg",
@@ -376,11 +386,15 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<
     kind:  StmtKind::Entry,
     span:  (0, 0),
     label: None,
+    defines: None,
+    uses:    Vec::new(),
   });
   let exit = g.add_node(NodeInfo {
     kind:  StmtKind::Exit,
     span:  (code.len(), code.len()),
     label: None,
+    defines: None,
+    uses:    Vec::new(),
   });
 
   // Build the body below the synthetic ENTRY.
@@ -436,98 +450,184 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<
 }
 
 /* ---------- TAINT-ANALYSIS PASSES ---------- */
+/// Recursively collect every identifier that occurs inside `n`.
+fn collect_idents(n: Node, code: &[u8], out: &mut Vec<String>) {
+  if n.kind() == "identifier" {
+    if let Some(txt) = text_of(n, code) {
+      out.push(txt);
+    }
+  } else {
+    let mut c = n.walk();
+    for ch in n.children(&mut c) {
+      collect_idents(ch, code, out);
+    }
+  }
+}
 
-/// Find every unsanitised Source→Sink path (simple forward BFS).
-pub fn find_tainted_paths<N, E>(
-  g: &Graph<N, E>,
-  is_source: impl Fn(NodeIndex) -> bool,
-  is_sink: impl Fn(NodeIndex) -> bool,
-  is_sanitizer: impl Fn(NodeIndex) -> bool,
-) -> Vec<Vec<NodeIndex>>
-where
-  N: std::fmt::Debug,
-{
-  use std::collections::VecDeque;
+/// Return `(defines, uses)` for the AST fragment `ast`.
+fn def_use(ast: Node, code: &[u8]) -> (Option<String>, Vec<String>) {
+  match ast.kind() {
+    // `let <pat> = <val>;`
+    "let_declaration" => {
+      let mut defs = None;
+      let mut uses = Vec::new();
 
-  let mut findings = Vec::new();
-
-  for src in g.node_indices().filter(|&n| is_source(n)) {
-    let mut pred: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-    let mut q = VecDeque::new();
-    q.push_back(src);
-
-    while let Some(nx) = q.pop_front() {
-      let killed_here = is_sanitizer(nx);
-      if is_sink(nx) {
-        // rebuild path
-        let mut path = vec![nx];
-        let mut cur = nx;
-        while let Some(&p) = pred.get(&cur) {
-          path.push(p);
-          if p == src {
-            break;
-          }
-          cur = p;
-        }
-        path.reverse();
-        findings.push(path);
+      if let Some(pat) = ast.child_by_field_name("pattern") {
+        // first identifier inside the pattern = variable name
+        let mut tmp = Vec::<String>::new();
+        collect_idents(pat, code, &mut tmp);
+        defs = tmp.into_iter().next();
       }
-      for tgt in g.neighbors(nx) {
-        if !pred.contains_key(&tgt) && !killed_here {
-          pred.insert(tgt, nx);
-          q.push_back(tgt);
+      if let Some(val) = ast.child_by_field_name("value") {
+        collect_idents(val, code, &mut uses);
+      }
+      (defs, uses)
+    }
+
+    // Plain assignment `x = y + z`
+    "assignment_expression" => {
+      let mut defs = None;
+      let mut uses = Vec::new();
+      if let Some(lhs) = ast.child_by_field_name("left") {
+        let mut tmp = Vec::<String>::new();
+        collect_idents(lhs, code, &mut tmp);
+        defs = tmp.pop();
+      }
+      if let Some(rhs) = ast.child_by_field_name("right") {
+        collect_idents(rhs, code, &mut uses);
+      }
+      (defs, uses)
+    }
+
+    // everything else – no definition, but may read vars
+    _ => {
+      let mut uses = Vec::new();
+      collect_idents(ast, code, &mut uses);
+      (None, uses)
+    }
+  }
+}
+
+fn set_hash(s: &HashSet<String>) -> u64 {
+  let mut v: Vec<_> = s.iter().collect();
+  v.sort();                       // deterministic
+  let mut h =  DefaultHasher::new();
+  v.hash(&mut h);
+  h.finish()
+}
+
+fn apply_taint<'a>(
+  node: &NodeInfo<'a>,
+  taint: &HashSet<String>,
+) -> HashSet<String> {
+  let mut out = taint.clone();
+
+  match node.label {
+    // A new untrusted value enters the program
+    Some(DataLabel::Source(_)) => {
+      if let Some(d) = &node.defines {
+        out.insert(d.clone());
+      }
+    }
+    // Anything written by a sanitizer becomes clean – whatever its
+    // arguments were is irrelevant here.
+    Some(DataLabel::Sanitizer(_)) => {
+      if let Some(d) = &node.defines {
+        out.remove(d);
+      }
+    }
+
+    // A function call *returning* tainted/clean data ----------------------
+    // (`let v = source_*()` or `let v = sanitize_*(x)`)
+    _ if node.kind == StmtKind::Call => {
+        if let Some(d) = &node.defines {
+              match node.label {
+                  Some(DataLabel::Source(_))     => { out.insert(d.clone()); } // gen
+                  Some(DataLabel::Sanitizer(_))  => { out.remove(d);        } // kill
+                  _ => { /* normal flow handled below */ }
+              }
+          }
+    }
+    
+    // All other statements: classic gen/kill for assignments
+    _ => {
+      if let Some(d) = &node.defines {
+        let rhs_tainted = node.uses.iter().any(|u| out.contains(u));
+        if rhs_tainted {
+          out.insert(d.clone());
+        } else {
+          out.remove(d);
         }
       }
     }
   }
-  findings
+
+  out
 }
 
-/// Drop any finding whose sink is dominated by a sanitizer.
-pub fn filter_by_dominators<N, E>(
-  g: &Graph<N, E>,
-  entry: NodeIndex,
-  findings: Vec<Vec<NodeIndex>>,
-  is_sanitizer: impl Fn(NodeIndex) -> bool,
-) -> Vec<Vec<NodeIndex>> {
-  let dom: Dominators<NodeIndex> = simple_fast(g, entry);
-  findings
-    .into_iter()
-    .filter(|path| {
-      let sink = *path.last().unwrap();
-      let mut cur = sink;
-      loop {
-        if is_sanitizer(cur) {
-          return false;
-        }
-        if let Some(idom) = dom.immediate_dominator(cur) {
-          cur = idom;
-        } else {
-          break;
-        }
-      }
-      true
-    })
-    .collect()
-}
-
-/// Public API: run both passes and return only the genuine problems.
 pub fn analyse_function(
   cfg: &Cfg,
   entry: NodeIndex,
 ) -> Vec<Vec<NodeIndex>> {
-  let tainted = find_tainted_paths(
-    cfg,
-    |n| matches!(cfg[n].label, Some(DataLabel::Source(_))),
-    |n| matches!(cfg[n].label, Some(DataLabel::Sink(_))),
-    |n| matches!(cfg[n].label, Some(DataLabel::Sanitizer(_))),
-  );
-  filter_by_dominators(
-    cfg,
-    entry,
-    tainted,
-    |n| matches!(cfg[n].label, Some(DataLabel::Sanitizer(_))),
-  )
+  use std::collections::{VecDeque, HashMap, HashSet};
+
+  /// Queue item: current CFG node + taint map that holds here
+  #[derive(Clone)]
+  struct Item {
+    node:  NodeIndex,
+    taint: HashSet<String>,
+  }
+
+  // (node, taint_hash)  →  predecessor key   (for path rebuild)
+  type Key = (NodeIndex, u64);
+  let mut pred: HashMap<Key, Key> = HashMap::new();
+
+  // Seen states so we do not revisit them infinitely
+  let mut seen: HashSet<Key> = HashSet::new();
+
+  // Resulting Source→Sink paths
+  let mut findings: Vec<Vec<NodeIndex>> = Vec::new();
+
+  let mut q = VecDeque::new();
+  q.push_back(Item { node: entry, taint: HashSet::new() });
+  seen.insert((entry, 0));
+
+  while let Some(Item { node, taint }) = q.pop_front() {
+    let updated = apply_taint(&cfg[node], &taint);          // step effect
+
+    /* ----------     SINK CHECK     ---------- */
+    if let Some(DataLabel::Sink(_)) = cfg[node].label {
+      if cfg[node].uses.iter().any(|u| updated.contains(u)) {
+        // reconstruct path back to *any* Source
+        let mut p: Vec<NodeIndex> = vec![node];
+        let mut k = (node, set_hash(&taint));           // predecessor key
+
+        while let Some(&(prev, _)) = pred.get(&k) {
+          p.push(prev);
+          if matches!(cfg[prev].label, Some(DataLabel::Source(_))) {
+            break;
+          }
+          // climb further
+          let prev_hash = pred.get(&k).map(|(_, h)| *h).unwrap_or(0);
+          k = (prev, prev_hash);
+        }
+        p.reverse();
+        findings.push(p);
+      }
+    }
+
+    /* ----------   BFS successor step   ---------- */
+    for succ in cfg.neighbors(node) {
+      let key = (succ, set_hash(&updated));
+      if !seen.contains(&key) {
+        seen.insert(key);
+        pred.insert(key, (node, set_hash(&taint)));
+        q.push_back(Item { node: succ, taint: updated.clone() });
+      }
+    }
+  }
+
+  findings
 }
 
 #[test]
