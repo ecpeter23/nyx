@@ -15,7 +15,7 @@ thread_local! {
 /// Convenience alias for node indices.
 fn byte_offset_to_point(tree: &tree_sitter::Tree, byte: usize) -> tree_sitter::Point {
   // `descendant_for_byte_range` gives us *some* node that starts at `byte`,
-  // `start_position` turns that into rows & columns (both 0-based) :contentReference[oaicite:1]{index=1}
+  // `start_position` turns that into rows & columns (both 0-based) 
   tree.root_node()
     .descendant_for_byte_range(byte, byte)
     .map(|n| n.start_position())
