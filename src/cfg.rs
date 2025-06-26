@@ -50,11 +50,47 @@ pub type Cfg<'a> = Graph<NodeInfo<'a>, EdgeKind>;
 //                      Utility helpers
 // -------------------------------------------------------------------------
 
+/// Return the text of a node.
 #[inline]
 fn text_of<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
   std::str::from_utf8(&code[n.start_byte()..n.end_byte()])
       .ok()
       .map(|s| s.to_string())
+}
+
+/// Return the callee identifier for the first call / method / macro inside `n`.
+fn first_call_ident<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
+  let mut cursor = n.walk();
+  for c in n.children(&mut cursor) {
+    match c.kind() {
+      "call_expression" | "method_call_expression" | "macro_invocation" => {
+        // Re-use the same logic we have in `push_node`
+        return match c.kind() {
+          "call_expression" => c
+              .child_by_field_name("function")
+              .and_then(|f| text_of(f, code)),
+          "method_call_expression" => {
+            let func = c.child_by_field_name("method")
+                .or_else(|| c.child_by_field_name("name"))
+                .and_then(|f| text_of(f, code));
+            let recv = c.child_by_field_name("object")
+                .and_then(|f| text_of(f, code));
+            match (recv, func) {
+              (Some(r), Some(f)) => Some(format!("{r}::{f}")),
+              (_,      Some(f))  => Some(f.to_string()),
+              _                  => None,
+            }
+          }
+          "macro_invocation" => c
+              .child_by_field_name("macro")
+              .and_then(|f| text_of(f, code)),
+          _ => None,
+        };
+      }
+      _ => {}
+    }
+  }
+  None
 }
 
 /// Create a node in one short borrow and optionally attach a taint label.
@@ -65,44 +101,63 @@ fn push_node<'a>(
   lang: &str,
   code: &'a [u8],
 ) -> NodeIndex {
-  // Extract a snippet that helps `classify()` decide if this is a Source / Sanitizer / Sink.
-  let text = match ast.kind() {
+  /* ── 1.  IDENTIFIER EXTRACTION ─────────────────────────────────────── */
+
+  // Primary guess (varies by AST kind)
+  let mut text = match ast.kind() {
+    // plain `foo(bar)` style call
     "call_expression" => ast
         .child_by_field_name("function")
-        .and_then(|n| text_of(n, code)),
+        .and_then(|n| text_of(n, code))
+        .unwrap_or_default(),
+
+    // method / UFCS call  `recv.method()`  or  `Type::func()`
     "method_call_expression" => {
-      let func  = ast.child_by_field_name("method")
+      let func = ast.child_by_field_name("method")
           .or_else(|| ast.child_by_field_name("name"))
           .and_then(|n| text_of(n, code));
-      let recv  = ast.child_by_field_name("object")
+      let recv = ast.child_by_field_name("object")
           .and_then(|n| text_of(n, code));
       match (recv, func) {
-        (Some(r), Some(f)) => Some(format!("{r}::{f}")),
-        (_,      Some(f))  => Some(f.to_string()),
-        _                  => None,
+        (Some(r), Some(f)) => format!("{r}::{f}"),
+        (_,      Some(f))  => f,
+        _                  => String::new(),
       }
     }
+
+    // `my_macro!(…)`
     "macro_invocation" => ast
         .child_by_field_name("macro")
-        .and_then(|n| text_of(n, code)),
-    _ => Some(
-      std::str::from_utf8(&code[ast.start_byte()..ast.end_byte()])
-          .unwrap_or_default()
-          .to_string(),
-    ),
-  }
-      .unwrap_or_default();
+        .and_then(|n| text_of(n, code))
+        .unwrap_or_default(),
 
-  let label = crate::labels::classify(lang, text.as_str());
+    // everything else – fallback to raw slice
+    _ => text_of(ast, code).unwrap_or_default(),
+  };
+
+  // If this is a `let` or `expression_statement` that *contains* a call,
+  // prefer the first inner call identifier instead of the whole line.
+  if matches!(ast.kind(), "let_declaration" | "expression_statement") {
+    if let Some(inner) = first_call_ident(ast, code) {
+      text = inner;
+    }
+  }
+
+  /* ── 2.  LABEL LOOK-UP  ───────────────────────────────────────────── */
+
+  let label = crate::labels::classify(lang, &text);
   let span  = (ast.start_byte(), ast.end_byte());
 
+  /* ── 3.  GRAPH INSERTION + DEBUG ──────────────────────────────────── */
+
   let idx = g.add_node(NodeInfo { kind, span, label });
-  
+
   debug!(
         target: "cfg",
-        "node {} ← {:?} span={:?} label={:?}",
+        "node {} ← {:?} txt=`{}` span={:?} label={:?}",
         idx.index(),
         kind,
+        text,
         span,
         label
     );
