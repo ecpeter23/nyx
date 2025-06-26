@@ -99,6 +99,7 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
         }
     }
   
+    // Check to ensure no duplicates (DOUBLE-CHECK EFFICIENCY)
     out.sort_by(|a, b| (a.line, a.col, &a.id, a.severity)
       .cmp(&(b.line, b.col, &b.id, b.severity)));
     out.dedup_by(|a, b| {

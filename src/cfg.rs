@@ -1,20 +1,35 @@
-use std::collections::{HashMap, VecDeque};
 use petgraph::algo::dominators::{simple_fast, Dominators};
 use petgraph::prelude::*;
 use tree_sitter::{Language, Node, Tree};
+use tracing::debug;
 
-/// Kinds of statements we care about.
+use std::collections::{HashMap, HashSet};
+
+/// -------------------------------------------------------------------------
+///  Public AST‑to‑CFG data structures
+/// -------------------------------------------------------------------------
 #[derive(Debug, Clone, Copy)]
 pub enum StmtKind {
-  Entry, Exit, Seq, If, Loop, Break, Continue, Return, Call,
+  Entry,
+  Exit,
+  Seq,
+  If,
+  Loop,
+  Break,
+  Continue,
+  Return,
+  Call,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum EdgeKind {
-  Seq, True, False, Back,
+  Seq,   // ordinary fall‑through
+  True,  // `cond == true` branch
+  False, // `cond == false` branch
+  Back,  // back‑edge that closes a loop
 }
 
-/// Taint metadata (optional on every node).
+/// Optional taint metadata (can sit on any node).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataLabel<'a> {
   Source(&'a str),
@@ -22,103 +37,299 @@ pub enum DataLabel<'a> {
   Sink(&'a str),
 }
 
-/// Full per-node info used by the analyser.
 #[derive(Debug, Clone)]
 pub struct NodeInfo<'a> {
-  pub kind: StmtKind,
-  pub span: (usize, usize),          // byte offsets in the file
-  pub label: Option<DataLabel<'a>>,  // None for ordinary statements
+  pub kind:  StmtKind,
+  pub span:  (usize, usize),      // byte offsets in the original file
+  pub label: Option<DataLabel<'a>>, // taint classification if any
 }
 
-/// Convenience alias.
 pub type Cfg<'a> = Graph<NodeInfo<'a>, EdgeKind>;
 
-/// --- helper: create a node in one short borrow --------------------------
-pub fn push_node<'a>(
-  g:     &mut Cfg<'a>,
-  kind:  StmtKind,
-  ast:   Node<'a>,
-  lang:  &str,
-  code:  &'a [u8],
-) -> NodeIndex {
-  let text = match ast.kind() {
-    "call_expression" => {
-      ast.child_by_field_name("function")
-        .and_then(|n| Some(&code[n.start_byte()..n.end_byte()]))
-        .and_then(|s| std::str::from_utf8(s).ok())
-        .unwrap_or_default()
-    }
-    "method_call_expression" => {
-      ast.child_by_field_name("method") 
-        .or_else(|| ast.child_by_field_name("name"))
-        .and_then(|n| Some(&code[n.start_byte()..n.end_byte()]))
-        .and_then(|s| std::str::from_utf8(s).ok())
-        .unwrap_or_default()
-    }
-    _ => {
-      let span = (ast.start_byte(), ast.end_byte());
-      std::str::from_utf8(&code[span.0..span.1]).unwrap_or_default()
-    }
-  };
+// -------------------------------------------------------------------------
+//                      Utility helpers
+// -------------------------------------------------------------------------
 
-  let span  = (ast.start_byte(), ast.end_byte());
-  let label = crate::labels::classify(lang, text);
-  
-  if !matches!(ast.kind(), "call_expression" | "method_call_expression") {
-    return g.add_node(NodeInfo { kind, span, label: None });
+/// Create a node in one short borrow and optionally attach a taint label.
+fn push_node<'a>(
+  g:    &mut Cfg<'a>,
+  kind: StmtKind,
+  ast:  Node<'a>,
+  lang: &str,
+  code: &'a [u8],
+) -> NodeIndex {
+  // Extract a snippet that helps `classify()` decide if this is a Source / Sanitizer / Sink.
+  let text = match ast.kind() {
+    "call_expression" => ast
+        .child_by_field_name("function")
+        .and_then(|n| std::str::from_utf8(&code[n.start_byte()..n.end_byte()]).ok()),
+    "method_call_expression" => ast
+        .child_by_field_name("method")
+        .or_else(|| ast.child_by_field_name("name"))
+        .and_then(|n| std::str::from_utf8(&code[n.start_byte()..n.end_byte()]).ok()),
+    "macro_invocation" => ast
+        .child_by_field_name("macro")
+        .and_then(|n| std::str::from_utf8(&code[n.start_byte()..n.end_byte()]).ok()),
+    _ => Some(std::str::from_utf8(&code[ast.start_byte()..ast.end_byte()]).unwrap_or_default()),
   }
-  g.add_node(NodeInfo { kind, span, label })
+      .unwrap_or_default();
+
+  let label = crate::labels::classify(lang, text);
+  let span  = (ast.start_byte(), ast.end_byte());
+
+  let idx = g.add_node(NodeInfo { kind, span, label });
+  
+  debug!(
+        target: "cfg",
+        "node {} ← {:?} span={:?} label={:?}",
+        idx.index(),
+        kind,
+        span,
+        label
+    );
+  idx
 }
 
+/// Add the same edge (of the same kind) from every node in `froms` to `to`.
+#[inline]
+fn connect_all<'a>(g: &mut Cfg<'a>, froms: &[NodeIndex], to: NodeIndex, kind: EdgeKind) {
+  for &f in froms {
+    debug!(target: "cfg", "edge {} → {} ({:?})", f.index(), to.index(), kind);
+    g.add_edge(f, to, kind);
+  }
+}
 
-/// Build an intraprocedural CFG and return (graph, entry_node).
-pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<'a>, NodeIndex) {
-  tracing::debug!("Building CFG for {}", &tree.root_node() );
-  
-  let mut g: Cfg<'a> = Graph::with_capacity(128, 256);
-  let entry = g.add_node(NodeInfo { kind: StmtKind::Entry,  span: (0, 0),             label: None });
-  let exit  = g.add_node(NodeInfo { kind: StmtKind::Exit,   span: (code.len(), code.len()), label: None });
+// -------------------------------------------------------------------------
+//    The recursive *work‑horse* that converts an AST node into a CFG slice.
+//    Returns the set of *exit* nodes that need to be wired further.
+// -------------------------------------------------------------------------
+fn build_sub<'a>(
+  ast:   Node<'a>,
+  preds: &[NodeIndex],      // predecessor frontier
+  g:     &mut Cfg<'a>,
+  lang:  &str,
+  code:  &'a [u8],
+) -> Vec<NodeIndex> {
+  match ast.kind() {
+    // ─────────────────────────────────────────────────────────────────
+    //  IF‑/ELSE: two branches that re‑merge afterwards
+    // ─────────────────────────────────────────────────────────────────
+    "if_expression" => {
+      // Condition node
+      let cond = push_node(g, StmtKind::If, ast, lang, code);
+      connect_all(g, preds, cond, EdgeKind::Seq);
 
-  // ---------- iterative DFS ----------
-  let mut stack = vec![(tree.root_node(), entry)];
-  while let Some((ts_node, prev)) = stack.pop() {
-    match ts_node.kind() {
-      "if_expression" => { // TODO: MAKE SURE THIS WORKS
-        let node = push_node(&mut g, StmtKind::If, ts_node, lang, code);
-        g.add_edge(prev, node, EdgeKind::Seq); 
-        g.add_edge(node, prev, EdgeKind::Seq);
-        
-        let mut cursor = ts_node.walk();
-        let children: Vec<_> = ts_node.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-          stack.push((child, node));
-        }
+      // Locate then & else blocks
+      let (then_block, else_block) = {
+        let mut cursor = ast.walk();
+        let blocks: Vec<_> = ast
+            .children(&mut cursor)
+            .filter(|n| n.kind() == "block")
+            .collect();
+        (blocks.get(0).copied(), blocks.get(1).copied())
+      };
+
+      // THEN branch
+      let then_exits = if let Some(b) = then_block {
+        let exits = build_sub(b, &[cond], g, lang, code);
+        // True edges leave the condition
+        connect_all(g, &[cond], exits[0], EdgeKind::True);
+        exits
+      } else {
+        vec![cond]
+      };
+
+      // ELSE branch
+      let else_exits = if let Some(b) = else_block {
+        let exits = build_sub(b, &[cond], g, lang, code);
+        connect_all(g, &[cond], exits[0], EdgeKind::False);
+        exits
+      } else {
+        // No explicit else → non-taken branch flows to the *then* exits
+        connect_all(g, &[cond], then_exits[0], EdgeKind::False);
+        then_exits.clone()
+      };
+
+      // Frontier = union of both branches
+      then_exits.into_iter().chain(else_exits).collect()
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  WHILE / FOR: classic loop with a back edge.
+    // ─────────────────────────────────────────────────────────────────
+    "while_statement" | "for_statement" => {
+      let header = push_node(g, StmtKind::Loop, ast, lang, code);
+      connect_all(g, preds, header, EdgeKind::Seq);
+
+      // Body = first (and usually only) block child.
+      let body = ast
+          .child_by_field_name("body")
+          .or_else(|| {
+            let mut c = ast.walk();
+            ast.children(&mut c).find(|n| n.kind() == "block")
+          })
+          .expect("loop without body");
+
+      let body_exits = build_sub(body, &[header], g, lang, code);
+
+      // Back‑edge for every linear exit → header.
+      for &e in &body_exits {
+        connect_all(g, &[e], header, EdgeKind::Back);
       }
-      "while_statement" | "for_statement" => {  // TODO: MAKE SURE THIS WORKS
-        let node = push_node(&mut g, StmtKind::Loop, ts_node, lang, code);
-        g.add_edge(prev, node, EdgeKind::Seq); 
-        g.add_edge(node, prev, EdgeKind::Seq);
-        
-        let mut cursor = ts_node.walk();
-        let children: Vec<_> = ts_node.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-          stack.push((child, node));
-        }
+      // Falling out of the loop = header’s false branch.
+      vec![header]
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Control-flow sinks (return / break / continue).
+    // ─────────────────────────────────────────────────────────────────
+    "return_statement" => {
+      let ret = push_node(g, StmtKind::Return, ast, lang, code);
+      connect_all(g, preds, ret, EdgeKind::Seq);
+      Vec::new() // terminates this path
+    }
+    "break_expression" | "break_statement" => {
+      let brk = push_node(g, StmtKind::Break, ast, lang, code);
+      connect_all(g, preds, brk, EdgeKind::Seq);
+      Vec::new()
+    }
+    "continue_expression" | "continue_statement" => {
+      let cont = push_node(g, StmtKind::Continue, ast, lang, code);
+      connect_all(g, preds, cont, EdgeKind::Seq);
+      Vec::new()
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  BLOCK: statements execute sequentially
+    // ─────────────────────────────────────────────────────────────────
+    "source_file" | "block" => {
+      let mut cursor   = ast.walk();
+      let mut frontier = preds.to_vec();
+      for child in ast.children(&mut cursor) {
+        frontier = build_sub(child, &frontier, g, lang, code);
       }
-      _ => {
-        let node = push_node(&mut g, StmtKind::Seq, ts_node, lang, code);
-        g.add_edge(prev, node, EdgeKind::Seq); 
-        g.add_edge(node, prev, EdgeKind::Seq);
-        
-        let mut cursor = ts_node.walk();
-        let children: Vec<_> = ts_node.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-          stack.push((child, node));
-        }
+      frontier
+    }
+
+    // Function item – create a header and dive into its body
+    "function_item" => {
+      let header = push_node(g, StmtKind::Seq, ast, lang, code);
+      connect_all(g, preds, header, EdgeKind::Seq);
+
+      if let Some(body) = ast.child_by_field_name("body") {
+        build_sub(body, &[header], g, lang, code)
+      } else {
+        vec![header] // declaration w/o body
       }
     }
+
+    // Statements that **may** contain a call ---------------------------------
+    "let_declaration" | "expression_statement" => {
+      let mut cursor = ast.walk();
+      let has_call = ast.children(&mut cursor).any(|c| {
+        matches!(
+                    c.kind(),
+                    "call_expression" | "method_call_expression" | "macro_invocation"
+                )
+      });
+
+      let kind = if has_call { StmtKind::Call } else { StmtKind::Seq };
+      let node = push_node(g, kind, ast, lang, code);
+      connect_all(g, preds, node, EdgeKind::Seq);
+      vec![node]
+    }
+
+    // Trivia we drop completely ---------------------------------------------
+    "line_comment" | "block_comment" | ";" | "," | "(" | ")" | "{" | "}" | "\n" => {
+      preds.to_vec()
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Every other node = simple sequential statement
+    // ─────────────────────────────────────────────────────────────────
+    _ => {
+      let n = push_node(g, StmtKind::Seq, ast, lang, code);
+      connect_all(g, preds, n, EdgeKind::Seq);
+      vec![n]
+    }
   }
-  g.add_edge(entry, exit, EdgeKind::Seq);
+}
+
+// -------------------------------------------------------------------------
+//  === PUBLIC ENTRY POINT =================================================
+// -------------------------------------------------------------------------
+
+/// Build an intraprocedural CFG and return (graph, entry_node).
+///
+/// * Walks the Tree‑Sitter AST.
+/// * Creates `StmtKind::*` nodes only for *statement‑level* constructs to keep
+///   the graph compact.
+/// * Wires a synthetic `Entry` node in front and a synthetic `Exit` node after
+///   all real sinks.
+pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<'a>, NodeIndex) {
+  debug!(target: "cfg", "Building CFG for {:?}", tree.root_node());
+
+  let mut g: Cfg<'a> = Graph::with_capacity(128, 256);
+  let entry = g.add_node(NodeInfo {
+    kind:  StmtKind::Entry,
+    span:  (0, 0),
+    label: None,
+  });
+  let exit = g.add_node(NodeInfo {
+    kind:  StmtKind::Exit,
+    span:  (code.len(), code.len()),
+    label: None,
+  });
+
+  // Build the body below the synthetic ENTRY.
+  let exits = build_sub(tree.root_node(), &[entry], &mut g, lang, code);
+
+  // Wire every real exit to our synthetic EXIT node.
+  for e in exits {
+    connect_all(&mut g, &[e], exit, EdgeKind::Seq);
+  }
+
+  debug!(target: "cfg", "CFG DONE — nodes: {}, edges: {}", g.node_count(), g.edge_count());
+
+  if true {
+    // List every node
+    for idx in g.node_indices() {
+      debug!(target: "cfg", "  node {:>3}: {:?}", idx.index(), g[idx]);
+    }
+    // List every edge
+    for e in g.edge_references() {
+      debug!(
+                target: "cfg",
+                "  edge {:>3} → {:<3} ({:?})",
+                e.source().index(),
+                e.target().index(),
+                e.weight()
+            );
+    }
+
+    // Reachability check
+    let mut reachable: HashSet<NodeIndex> = Default::default();
+    let mut bfs = Bfs::new(&g, entry);
+    while let Some(nx) = bfs.next(&g) {
+      reachable.insert(nx);
+    }
+    debug!(
+            target: "cfg",
+            "reachable nodes: {}/{}",
+            reachable.len(),
+            g.node_count()
+        );
+    if reachable.len() != g.node_count() {
+      let unreachable: Vec<_> =
+          g.node_indices().filter(|i| !reachable.contains(i)).collect();
+      debug!(target: "cfg", "‼︎ unreachable nodes: {:?}", unreachable);
+    }
+
+    // (Optional) Dominator tree sanity check
+    let doms: Dominators<_> = simple_fast(&g, entry);
+    debug!(target: "cfg", "dominator tree computed (len = {:?})", doms);
+  }
+  
   (g, entry)
 }
 
