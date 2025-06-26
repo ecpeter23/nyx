@@ -50,6 +50,38 @@
 
 ## Installation
 
+### Install crate
+```bash
+$ cargo install nyx-scanner
+```
+
+### Install Github release
+1. Navigate to the [Releases](https://github.com/ecpeter23/nyx/releases) page of the repository.
+2. Download the appropriate binary for your system:
+
+    ```nyx-x86_64-unknown-linux-gnu.zip``` for Linux
+
+    ```nyx-x86_64-pc-windows-msvc.zip``` for Windows
+
+    ```nyx-x86_64-apple-darwin.zip``` or ```nyx-aarch64-apple-darwin.zip``` for macOS (Intel or Apple Silicon)
+
+3. Unzip the file and move the executable to a directory in your system PATH:
+    ```bash
+    # Example for Unix systems
+    unzip nyx-x86_64-unknown-linux-gnu.zip
+    chmod +x nyx
+    sudo mv nyx /usr/local/bin/
+    ```
+    ```bash
+    # Example for Windows in PowerShell
+    Expand-Archive -Path nyx-x86_64-pc-windows-msvc.zip -DestinationPath .
+    Move-Item -Path .\nyx.exe -Destination "C:\Program Files\Nyx\"  # Add to PATH manually if needed
+    ```
+   
+4. Verify the installation:
+     ```bash
+    nyx --version
+    ```
 ### Build from source
 
 ```bash
