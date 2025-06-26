@@ -525,3 +525,90 @@ fn env_to_arg_is_flagged() {
 
   assert_eq!(findings.len(), 1);  // exactly one unsanitised Source→Sink
 }
+
+#[test]
+fn taint_through_if_else() {
+  let src = br#"
+        use std::env; use std::process::Command;
+        fn main() {
+            let x = env::var("DANGEROUS").unwrap();
+            let safe = html_escape::encode_safe(&x);
+
+            if x.len() > 5 {
+                Command::new("sh").arg(&x).status().unwrap();   // UNSAFE
+            } else {
+                Command::new("sh").arg(&safe).status().unwrap(); // SAFE
+            }
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+
+  // exactly one path (via the True branch) should be flagged
+  assert_eq!(findings.len(), 1);
+}
+
+#[test]
+fn taint_through_while_loop() {
+  let src = br#"
+        use std::{env, process::Command};
+        fn main() {
+            let mut x = env::var("DANGEROUS").unwrap();
+            while x.len() < 100 {                       // Loop header (Loop)
+                x.push_str("a");
+            }
+            Command::new("sh").arg(x).status().unwrap(); // Should be flagged
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+  assert_eq!(findings.len(), 1);
+}
+
+#[test]
+fn taint_killed_by_sanitizer() {
+  let src = br#"
+        use std::{env, process::Command};
+        fn main() {
+            let x = env::var("DANGEROUS").unwrap();
+            let clean = html_escape::encode_safe(&x);    // sanitizer node
+            Command::new("sh").arg(clean).status().unwrap();  // SAFE
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+  assert!(findings.is_empty());
+}
+
+#[test]
+fn taint_breaks_out_of_loop() {
+  let src = br#"
+        use std::{env, process::Command};
+        fn main() {
+            loop {
+                let x = env::var("DANGEROUS").unwrap();
+                Command::new("sh").arg(&x).status().unwrap(); // vulnerable
+                break;
+            }
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+  assert_eq!(findings.len(), 1);
+}
