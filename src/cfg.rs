@@ -1,6 +1,7 @@
+use tree_sitter::Language;
 use petgraph::algo::dominators::{simple_fast, Dominators};
 use petgraph::prelude::*;
-use tree_sitter::{Language, Node, Tree};
+use tree_sitter::{Node, Tree};
 use tracing::debug;
 
 use std::collections::{HashMap, HashSet};
@@ -228,6 +229,24 @@ fn build_sub<'a>(
       then_exits.into_iter().chain(else_exits).collect()
     }
 
+    "loop_expression" => {
+      // Synthetic header node
+      let header = push_node(g, StmtKind::Loop, ast, lang, code);
+      connect_all(g, preds, header, EdgeKind::Seq);
+
+      // The body is the single `block` child
+      let body = ast.child_by_field_name("body")
+          .expect("loop without body");
+      let body_exits = build_sub(body, &[header], g, lang, code);
+
+      // Back-edge from every linear exit to header
+      for &e in &body_exits {
+        connect_all(g, &[e], header, EdgeKind::Back);
+      }
+      // `loop` may break → those exits are frontiers too
+      body_exits.into_iter().chain([header]).collect()
+    }
+
     // ─────────────────────────────────────────────────────────────────
     //  WHILE / FOR: classic loop with a back edge.
     // ─────────────────────────────────────────────────────────────────
@@ -300,12 +319,18 @@ fn build_sub<'a>(
     // Statements that **may** contain a call ---------------------------------
     "let_declaration" | "expression_statement" => {
       let mut cursor = ast.walk();
-      let has_call = ast.children(&mut cursor).any(|c| {
-        matches!(
-                    c.kind(),
-                    "call_expression" | "method_call_expression" | "macro_invocation"
-                )
-      });
+      
+      if let Some(inner) = ast.children(&mut cursor).find(|c| matches!(
+        c.kind(),
+        "loop_expression" | "while_statement" | "for_statement" | "if_expression"
+    )) {
+        return build_sub(inner, preds, g, lang, code);
+      }
+      
+      let has_call = ast.children(&mut cursor).any(|c| matches!(
+        c.kind(),
+        "call_expression" | "method_call_expression" | "macro_invocation"
+    ));
 
       let kind = if has_call { StmtKind::Call } else { StmtKind::Seq };
       let node = push_node(g, kind, ast, lang, code);
@@ -432,9 +457,7 @@ where
     q.push_back(src);
 
     while let Some(nx) = q.pop_front() {
-      if is_sanitizer(nx) {
-        continue; // taint killed
-      }
+      let killed_here = is_sanitizer(nx);
       if is_sink(nx) {
         // rebuild path
         let mut path = vec![nx];
@@ -450,7 +473,7 @@ where
         findings.push(path);
       }
       for tgt in g.neighbors(nx) {
-        if !pred.contains_key(&tgt) {
+        if !pred.contains_key(&tgt) && !killed_here {
           pred.insert(tgt, nx);
           q.push_back(tgt);
         }

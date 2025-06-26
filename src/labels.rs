@@ -16,8 +16,8 @@ pub struct LabelRule {
 pub mod rust {
   use super::*;
 
-  ///   • `Source`  = untrusted data entering the program  
-  ///   • `Sink`    = potentially dangerous APIs that consume that data  
+  ///   • `Source`  = untrusted data entering the program
+  ///   • `Sink`    = potentially dangerous APIs that consume that data
   ///   • `Sanitizer` = escapes / validators that make data safe
   pub static RULES: &[LabelRule] = &[
     // ─────────── Sources ───────────
