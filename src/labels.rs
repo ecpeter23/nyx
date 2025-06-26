@@ -25,10 +25,6 @@ pub mod rust {
       matchers: &["std::env::var", "env::var"],
       label:    DataLabel::Source("env-var"),
     },
-    LabelRule {
-      matchers: &["source_", "source_env", "source_file"],
-      label:    DataLabel::Source("wrapper"),
-    },
 
     // ───────── Sanitizers ──────────
       // `fn sanitize_*(&str) -> String`
@@ -53,10 +49,6 @@ pub mod rust {
         "command::output",
       ],
       label:    DataLabel::Sink("process-spawn"),
-    },
-    LabelRule {
-      matchers: &["sink_"],
-      label:    DataLabel::Sink("wrapper"),
     },
   ];
 }
@@ -100,15 +92,19 @@ pub fn classify<'a>(lang: &str, text: &str) -> Option<DataLabel<'a>> {
     for raw in rule.matchers {
       let m = raw.to_ascii_lowercase();
 
-      if text_lc.ends_with(&m) {
-        let start = text_lc.len() - m.len();     
-        let ok = start == 0              
-          || matches!(text_lc.as_bytes()[start - 1], b'.' | b':');
-
-        if ok {
-          return Some(rule.label);     
+      if m.ends_with('_') {
+          if text_lc.starts_with(&m) {
+            return Some(rule.label);
+          }
         }
-      }
+      else if text_lc.ends_with(&m) {
+          let start = text_lc.len() - m.len();
+          let ok = start == 0
+            || matches!(text_lc.as_bytes()[start - 1], b'.' | b':');
+          if ok {
+            return Some(rule.label);
+          }
+        }
     }
 }
   None
