@@ -7,7 +7,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/nyx-scanner.svg)](https://crates.io/crates/nyx-scanner)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/ecpeter23/nyx/ci.yml?branch=master)](https://github.com/ecpeter23/nyx/actions)
 </div>
 
@@ -85,14 +85,14 @@ $ cargo install nyx-scanner
 ### Build from source
 
 ```bash
-$ git clone https://github.com/<your‑org>/nyx.git
+$ git clone https://github.com/ecpeter23/nyx.git
 $ cd nyx
 $ cargo build --release
 # optional – copy the binary into PATH
 $ cargo install --path .
 ```
 
-Nyx targets **stable Rust 1.78 or later**.
+Nyx targets **stable Rust 1.85 or later**.
 
 ---
 
