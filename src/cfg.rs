@@ -735,3 +735,24 @@ fn taint_breaks_out_of_loop() {
   let findings = analyse_function(&cfg, entry);
   assert_eq!(findings.len(), 1);
 }
+
+#[test]
+fn test_two_sources() {
+  let src = br#"
+        use std::{env, process::Command};
+        fn main() {
+            let x = env::var("DANGEROUS").unwrap();
+            let y = env::var("SAFE").unwrap();
+            let clean = html_escape::encode_safe(&y);
+            Command::new("sh").arg(x).status().unwrap();
+            Command::new("sh").arg(clean).status().unwrap();
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+  assert_eq!(findings.len(), 1);
+}
