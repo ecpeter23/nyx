@@ -1,12 +1,10 @@
 mod rust;
 mod javascript;
-mod syntax;
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use bitflags::bitflags;
 use phf::Map;
-pub(crate) use crate::labels::syntax::Kind;
 
 /// A single rule: if the AST text equals (or ends with) one of the `matchers`,
 /// the node gets `label`.
@@ -26,6 +24,29 @@ bitflags! {
         const JSON_PARSE   = 0b0001_0000;
         // ADD MORE
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+  If,
+  InfiniteLoop,
+  While,
+  For,
+  LoopBody,
+  CallFn,
+  CallMethod,
+  CallMacro,
+  Break,
+  Continue,
+  Return,
+  Block,
+  SourceFile,
+  Function,
+  MayWrapCall,
+  Assignment,
+  CallWrapper,
+  Trivia,
+  Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

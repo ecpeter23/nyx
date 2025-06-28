@@ -1,5 +1,4 @@
-use crate::labels::{Cap, DataLabel, LabelRule};
-use crate::labels::syntax::{Kind};
+use crate::labels::{Cap, DataLabel, Kind, LabelRule};
 use phf::{phf_map, Map};
 
 pub static RULES: &[LabelRule] = &[
