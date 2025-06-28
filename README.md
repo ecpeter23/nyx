@@ -1,8 +1,6 @@
 <div align="center">
   <img src="assets/logo.png" alt="nyx logo" width="300"/>
 
-# Nyx
-
 **Fast, cross-language cli vulnerability scanner.**
 
 [![crates.io](https://img.shields.io/crates/v/nyx-scanner.svg)](https://crates.io/crates/nyx-scanner)
