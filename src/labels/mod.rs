@@ -42,7 +42,6 @@ pub enum Kind {
     Block,
     SourceFile,
     Function,
-    MayWrapCall,
     Assignment,
     CallWrapper,
     Trivia,
@@ -94,10 +93,10 @@ pub fn lookup(lang: &str, raw: &str) -> Kind {
 
 /// Try to classify a piece of syntax text.
 /// `lang` is the canonicalised language key (“rust”, “javascript”, …).
-pub fn classify<'a>(lang: &str, text: &str) -> Option<DataLabel> {
+pub fn classify(lang: &str, text: &str) -> Option<DataLabel> {
     let key = lang.to_ascii_lowercase();
     let rules = REGISTRY.get(key.as_str())?;
-    let head = text.split(|c| c == '(' || c == '<').next().unwrap_or("");
+    let head = text.split(['(', '<']).next().unwrap_or("");
 
     let text_lc = head.trim().to_ascii_lowercase();
 

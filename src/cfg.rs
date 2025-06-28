@@ -7,20 +7,19 @@ use crate::labels::{DataLabel, Kind, classify, lookup};
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-/// WHAT WE STILL NEED TO DO:
-/// todo: add the cap labels and remove the bit flags after each sanitizer, checking the bit flags with the sink
-///
-///
-/// 1.
-/// We need to analyze the CFG and add function details to the nodes.
-/// And upload each functions status to a cache with the specific status of the function, for example what source it has, what sink it has, what sanitizer it has, and what taint it has.
-///
-/// 2.
-/// For each taint from a function we will see if it gets tainted in a function if not, we will add it to a list of potentially tainted functions
-/// then, after we analyze all the functions, we will see if any of the potentially tainted functions are actually tainted
-///
-/// 3.
-///
+// WHAT WE STILL NEED TO DO:
+// todo: add the cap labels and remove the bit flags after each sanitizer, checking the bit flags with the sink
+//
+//
+// 1.
+// We need to analyze the CFG and add function details to the nodes.
+// And upload each functions status to a cache with the specific status of the function, for example what source it has, what sink it has, what sanitizer it has, and what taint it has.
+//
+// 2.
+// For each taint from a function we will see if it gets tainted in a function if not, we will add it to a list of potentially tainted functions
+// then, after we analyze all the functions, we will see if any of the potentially tainted functions are actually tainted
+//
+// 3.
 
 /// -------------------------------------------------------------------------
 ///  Public AST‑to‑CFG data structures
@@ -153,7 +152,7 @@ fn push_node<'a>(
     // If this is a `let` or `expression_statement` that *contains* a call,
     // prefer the first inner call identifier instead of the whole line.
     if matches!(lookup(lang, ast.kind()), Kind::CallWrapper) {
-        if let Some(inner) = first_call_ident(ast, &lang, code) {
+        if let Some(inner) = first_call_ident(ast, lang, code) {
             text = inner;
         }
     }
@@ -189,7 +188,7 @@ fn push_node<'a>(
 
 /// Add the same edge (of the same kind) from every node in `froms` to `to`.
 #[inline]
-fn connect_all<'a>(g: &mut Cfg, froms: &[NodeIndex], to: NodeIndex, kind: EdgeKind) {
+fn connect_all(g: &mut Cfg, froms: &[NodeIndex], to: NodeIndex, kind: EdgeKind) {
     for &f in froms {
         debug!(target: "cfg", "edge {} → {} ({:?})", f.index(), to.index(), kind);
         g.add_edge(f, to, kind);
@@ -223,7 +222,7 @@ fn build_sub<'a>(
                     .children(&mut cursor)
                     .filter(|n| n.kind() == "block")
                     .collect();
-                (blocks.get(0).copied(), blocks.get(1).copied())
+                (blocks.first().copied(), blocks.get(1).copied())
             };
 
             // THEN branch
@@ -543,7 +542,7 @@ fn set_hash(s: &HashSet<String>) -> u64 {
     h.finish()
 }
 
-fn apply_taint<'a>(node: &NodeInfo, taint: &HashSet<String>) -> HashSet<String> {
+fn apply_taint(node: &NodeInfo, taint: &HashSet<String>) -> HashSet<String> {
     let mut out = taint.clone();
 
     match node.label {
