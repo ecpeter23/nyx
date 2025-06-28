@@ -8,6 +8,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::labels::{classify, DataLabel};
 
 /// WHAT WE STILL NEED TO DO:
+/// todo: add the cap labels and remove the bit flags after each sanitizer, checking the bit flags with the sink
+///
+///
 /// 1.
 /// We need to analyze the CFG and add function details to the nodes.
 /// And upload each functions status to a cache with the specific status of the function, for example what source it has, what sink it has, what sanitizer it has, and what taint it has.
