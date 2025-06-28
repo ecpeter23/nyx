@@ -1,11 +1,23 @@
-use tree_sitter::Language;
 use petgraph::algo::dominators::{simple_fast, Dominators};
 use petgraph::prelude::*;
 use tree_sitter::{Node, Tree};
 use tracing::debug;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use crate::labels::{classify, DataLabel};
+
+/// WHAT WE STILL NEED TO DO:
+/// 1.
+/// We need to analyze the CFG and add function details to the nodes.
+/// And upload each functions status to a cache with the specific status of the function, for example what source it has, what sink it has, what sanitizer it has, and what taint it has.
+/// 
+/// 2.
+/// For each taint from a function we will see if it gets tainted in a function if not, we will add it to a list of potentially tainted functions
+/// then, after we analyze all the functions, we will see if any of the potentially tainted functions are actually tainted
+/// 
+/// 3.
+/// 
 
 /// -------------------------------------------------------------------------
 ///  Public AST‑to‑CFG data structures
@@ -32,24 +44,16 @@ pub enum EdgeKind {
   Back,  // back‑edge that closes a loop
 }
 
-/// Optional taint metadata (can sit on any node).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataLabel<'a> {
-  Source(&'a str),
-  Sanitizer(&'a str),
-  Sink(&'a str),
-}
-
 #[derive(Debug, Clone)]
-pub struct NodeInfo<'a> {
+pub struct NodeInfo {
   pub kind:  StmtKind,
   pub span:  (usize, usize),      // byte offsets in the original file
-  pub label: Option<DataLabel<'a>>, // taint classification if any
+  pub label: Option<DataLabel>,   // taint classification if any
   pub defines:  Option<String>,   // variable written by this stmt
   pub uses:     Vec<String>,      // variables read
 }
 
-pub type Cfg<'a> = Graph<NodeInfo<'a>, EdgeKind>;
+pub type Cfg = Graph<NodeInfo, EdgeKind>;
 
 // -------------------------------------------------------------------------
 //                      Utility helpers
@@ -100,7 +104,7 @@ fn first_call_ident<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
 
 /// Create a node in one short borrow and optionally attach a taint label.
 fn push_node<'a>(
-  g:    &mut Cfg<'a>,
+  g:    &mut Cfg,
   kind: StmtKind,
   ast:  Node<'a>,
   lang: &str,
@@ -150,7 +154,7 @@ fn push_node<'a>(
 
   /* ── 2.  LABEL LOOK-UP  ───────────────────────────────────────────── */
 
-  let label = crate::labels::classify(lang, &text);
+  let label = classify(lang, &text);
   let span  = (ast.start_byte(), ast.end_byte());
 
   /* ── 3.  GRAPH INSERTION + DEBUG ──────────────────────────────────── */
@@ -177,7 +181,7 @@ fn push_node<'a>(
 
 /// Add the same edge (of the same kind) from every node in `froms` to `to`.
 #[inline]
-fn connect_all<'a>(g: &mut Cfg<'a>, froms: &[NodeIndex], to: NodeIndex, kind: EdgeKind) {
+fn connect_all<'a>(g: &mut Cfg, froms: &[NodeIndex], to: NodeIndex, kind: EdgeKind) {
   for &f in froms {
     debug!(target: "cfg", "edge {} → {} ({:?})", f.index(), to.index(), kind);
     g.add_edge(f, to, kind);
@@ -191,7 +195,7 @@ fn connect_all<'a>(g: &mut Cfg<'a>, froms: &[NodeIndex], to: NodeIndex, kind: Ed
 fn build_sub<'a>(
   ast:   Node<'a>,
   preds: &[NodeIndex],      // predecessor frontier
-  g:     &mut Cfg<'a>,
+  g:     &mut Cfg,
   lang:  &str,
   code:  &'a [u8],
 ) -> Vec<NodeIndex> {
@@ -378,10 +382,10 @@ fn build_sub<'a>(
 ///   the graph compact.
 /// * Wires a synthetic `Entry` node in front and a synthetic `Exit` node after
 ///   all real sinks.
-pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg<'a>, NodeIndex) {
+pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg, NodeIndex) {
   debug!(target: "cfg", "Building CFG for {:?}", tree.root_node());
 
-  let mut g: Cfg<'a> = Graph::with_capacity(128, 256);
+  let mut g: Cfg = Graph::with_capacity(128, 256);
   let entry = g.add_node(NodeInfo {
     kind:  StmtKind::Entry,
     span:  (0, 0),
@@ -517,7 +521,7 @@ fn set_hash(s: &HashSet<String>) -> u64 {
 }
 
 fn apply_taint<'a>(
-  node: &NodeInfo<'a>,
+  node: &NodeInfo,
   taint: &HashSet<String>,
 ) -> HashSet<String> {
   let mut out = taint.clone();
@@ -632,6 +636,7 @@ pub fn analyse_function(
 
 #[test]
 fn env_to_arg_is_flagged() {
+  use tree_sitter::Language;
   let src = br#"
         use std::env; use std::process::Command;
         fn main() {
@@ -651,6 +656,7 @@ fn env_to_arg_is_flagged() {
 
 #[test]
 fn taint_through_if_else() {
+  use tree_sitter::Language;
   let src = br#"
         use std::env; use std::process::Command;
         fn main() {
@@ -677,6 +683,7 @@ fn taint_through_if_else() {
 
 #[test]
 fn taint_through_while_loop() {
+  use tree_sitter::Language;
   let src = br#"
         use std::{env, process::Command};
         fn main() {
@@ -698,6 +705,7 @@ fn taint_through_while_loop() {
 
 #[test]
 fn taint_killed_by_sanitizer() {
+  use tree_sitter::Language;
   let src = br#"
         use std::{env, process::Command};
         fn main() {
@@ -717,6 +725,7 @@ fn taint_killed_by_sanitizer() {
 
 #[test]
 fn taint_breaks_out_of_loop() {
+  use tree_sitter::Language;
   let src = br#"
         use std::{env, process::Command};
         fn main() {
@@ -738,6 +747,7 @@ fn taint_breaks_out_of_loop() {
 
 #[test]
 fn test_two_sources() {
+  use tree_sitter::Language;
   let src = br#"
         use std::{env, process::Command};
         fn main() {
