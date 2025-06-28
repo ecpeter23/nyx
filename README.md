@@ -16,7 +16,7 @@
 **Nyx** is a lightweight lightning-fast Rust‑native command‑line tool that detects potentially dangerous code patterns across several programming languages. It combines the accuracy of [`tree‑sitter`](https://tree-sitter.github.io/) parsing with a curated rule set and an optional SQLite‑backed index to deliver fast, repeatable scans on projects of any size.
 
 > **Project status – Alpha**   
-> Nyx is under active development. The public interface, rule set, and output formats may change without notice while we stabilize the core. Please pin exact versions in production environments.
+> Nyx is under active development. The public interface, rule set, and output formats may change without notice while we stabilise the core. The new CFG + taint engine is experimental and Rust-only for now – please report any crashes or false-positives. Pin exact versions in production environments
 
 ---
 
@@ -172,15 +172,26 @@ A fully documented `nyx.conf` is generated automatically on first run.
 
 ## Roadmap
 
-| Area                  | Planned Improvements                                                      |
-|-----------------------|---------------------------------------------------------------------------|
-| More language support | Plans to create rule sets for over 100 languages for maximum coverage     |
-| Control‑flow analysis | Generation of CFGs for deeper reasoning about execution paths             |
-| Taint tracking        | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks |
-| Output formats        | Full SARIF 2.1.0, JUnit XML, HTML report generator                        |
-| Rule updates          | Remote rule feed with signature verification                              |
+| Area                  | Planned Improvements                                                                                  |
+|-----------------------|-------------------------------------------------------------------------------------------------------|
+| More language support | Plans to create rule sets for over 100 languages for maximum coverage                                 |
+| Control‑flow analysis | Inter‑procedural function summaries. Cap label propagation & bit‑flag checks. Loop/branch sensitivity |
+| Taint tracking        | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks                             |
+| Output formats        | Full SARIF 2.1.0, JUnit XML, HTML report generator                                                    |
+| Rule updates          | Remote rule feed with signature verification                                                          |
+| Performance & UX      | Incremental CFG cache, progress‑bar UX, smart file‑watch re‑scan                                      |
 
 Community feedback will help shape priorities; please open an issue to discuss proposed changes.
+
+---
+
+## Experimental Features & Feedback
+
+The new Rust intra‑procedural CFG + taint engine is not enabled.
+
+Expect rough edges: slightly slower scans, occasional false positives, limited language coverage.
+
+Please open an issue for every crash, panic, or suspicious result – attach the minimal code snippet and mention the Nyx version.
 
 ---
 
