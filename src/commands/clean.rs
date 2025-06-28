@@ -12,7 +12,7 @@ pub fn handle(project: Option<String>, all: bool, config_dir: &std::path::Path) 
         }
         println!("{}", style("✔ All indexes cleaned").green().bold());
     } else if let Some(proj_name) = project {
-      let db_path = config_dir.join(format!("{proj_name}.sqlite"));
+        let db_path = config_dir.join(format!("{proj_name}.sqlite"));
         if db_path.exists() {
             fs::remove_file(&db_path)?;
             println!(
