@@ -32,6 +32,15 @@ pub enum Commands {
         /// Show only high severity issues
         #[arg(long)]
         high_only: bool,
+
+        #[arg(long)]
+        ast_only: bool,
+
+        #[arg(long)]
+        cfg_only: bool,
+      
+        #[arg(long)]
+        all_targets: bool,
     },
 
     /// Manage project indexes

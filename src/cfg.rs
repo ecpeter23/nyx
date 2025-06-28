@@ -225,7 +225,9 @@ fn build_sub<'a>(
       let then_exits = if let Some(b) = then_block {
         let exits = build_sub(b, &[cond], g, lang, code);
         // True edges leave the condition
-        connect_all(g, &[cond], exits[0], EdgeKind::True);
+        if let Some(&first) = exits.first() {
+          connect_all(g, &[cond], first, EdgeKind::True);
+        }
         exits
       } else {
         vec![cond]
@@ -234,11 +236,15 @@ fn build_sub<'a>(
       // ELSE branch
       let else_exits = if let Some(b) = else_block {
         let exits = build_sub(b, &[cond], g, lang, code);
-        connect_all(g, &[cond], exits[0], EdgeKind::False);
+        if let Some(&first) = exits.first() {
+          connect_all(g, &[cond], first, EdgeKind::False);
+        }
         exits
       } else {
         // No explicit else → non-taken branch flows to the *then* exits
-        connect_all(g, &[cond], then_exits[0], EdgeKind::False);
+        if let Some(&first) = then_exits.first() {
+          connect_all(g, &[cond], first, EdgeKind::False);
+        }
         then_exits.clone()
       };
 
@@ -768,4 +774,25 @@ fn test_two_sources() {
   let (cfg, entry) = build_cfg(&tree, src, "rust");
   let findings = analyse_function(&cfg, entry);
   assert_eq!(findings.len(), 1);
+}
+
+#[test]
+fn test_should_not_panic_on_empty_function() {
+  use tree_sitter::Language;
+  let src = br#"
+        use std::{env, process::Command};
+        fn f() {
+            if cond() {
+                return;
+            }
+            do_something();
+        }"#;
+
+  let mut parser = tree_sitter::Parser::new();
+  parser.set_language(&Language::from(tree_sitter_rust::LANGUAGE)).unwrap();
+  let tree = parser.parse(src as &[u8], None).unwrap();
+
+  let (cfg, entry) = build_cfg(&tree, src, "rust");
+  let findings = analyse_function(&cfg, entry);
+  assert!(findings.is_empty());
 }

@@ -8,9 +8,21 @@ use toml;
 
 static DEFAULT_CONFIG_TOML: &str = include_str!("../../default-nyx.conf");
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AnalysisMode {
+  #[default]
+  Full,
+  Ast,
+  Taint,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct ScannerConfig {
+    /// The analysis mode to use.
+    pub mode: AnalysisMode,
+
     /// The minimum severity level to output
     pub min_severity: Severity,
 
@@ -47,6 +59,7 @@ pub struct ScannerConfig {
 impl Default for ScannerConfig {
     fn default() -> Self {
         Self {
+            mode: AnalysisMode::Full,
             min_severity: Severity::Low,
             max_file_size_mb: None,
             excluded_extensions: vec![
@@ -240,6 +253,7 @@ fn create_example_config(config_dir: &Path) -> NyxResult<()> {
 /// supply new exclusions and overriding everything else.
 fn merge_configs(mut default: Config, user: Config) -> Config {
     // --- ScannerConfig ---
+    default.scanner.mode = user.scanner.mode;
     default.scanner.min_severity = user.scanner.min_severity;
     default.scanner.max_file_size_mb = user.scanner.max_file_size_mb;
     default.scanner.read_global_ignore = user.scanner.read_global_ignore;
