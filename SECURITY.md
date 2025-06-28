@@ -17,7 +17,7 @@ Before that, breaking changes may land in any minor release.
   Please **do not** open public GitHub issues for security bugs.
 
 * **How to report**  
-  1. To report a vulnerability, please use the GitHub discolsure in the security tab to alert us to a security issue.
+  1. To report a vulnerability, please use the GitHub disclosure in the security tab to alert us to a security issue.
 
 * **What to include**  
   – A minimal PoC or reproduction steps  
