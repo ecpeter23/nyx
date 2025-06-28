@@ -5,7 +5,7 @@ use tracing::debug;
 
 use std::collections::{HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use crate::labels::{classify, DataLabel};
+use crate::labels::{classify, lookup, DataLabel, Kind};
 
 /// WHAT WE STILL NEED TO DO:
 /// todo: add the cap labels and remove the bit flags after each sanitizer, checking the bit flags with the sink
@@ -71,17 +71,17 @@ fn text_of<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
 }
 
 /// Return the callee identifier for the first call / method / macro inside `n`.
-fn first_call_ident<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
+fn first_call_ident<'a>(n: Node<'a>, lang: &str, code: &'a [u8]) -> Option<String> {
   let mut cursor = n.walk();
   for c in n.children(&mut cursor) {
-    match c.kind() {
-      "call_expression" | "method_call_expression" | "macro_invocation" => {
+    match lookup(lang, c.kind()) {
+      Kind::CallFn | Kind::CallMethod | Kind::CallMacro => {
         // Re-use the same logic we have in `push_node`
-        return match c.kind() {
-          "call_expression" => c
+        return match lookup(lang, c.kind()) {
+          Kind::CallFn => c
               .child_by_field_name("function")
               .and_then(|f| text_of(f, code)),
-          "method_call_expression" => {
+          Kind::CallMethod => {
             let func = c.child_by_field_name("method")
                 .or_else(|| c.child_by_field_name("name"))
                 .and_then(|f| text_of(f, code));
@@ -93,7 +93,7 @@ fn first_call_ident<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
               _                  => None,
             }
           }
-          "macro_invocation" => c
+          Kind::CallMacro => c
               .child_by_field_name("macro")
               .and_then(|f| text_of(f, code)),
           _ => None,
@@ -116,15 +116,15 @@ fn push_node<'a>(
   /* ── 1.  IDENTIFIER EXTRACTION ─────────────────────────────────────── */
 
   // Primary guess (varies by AST kind)
-  let mut text = match ast.kind() {
+  let mut text = match lookup(lang, ast.kind()) {
     // plain `foo(bar)` style call
-    "call_expression" => ast
+    Kind::CallFn => ast
         .child_by_field_name("function")
         .and_then(|n| text_of(n, code))
         .unwrap_or_default(),
 
     // method / UFCS call  `recv.method()`  or  `Type::func()`
-    "method_call_expression" => {
+    Kind::CallMethod => {
       let func = ast.child_by_field_name("method")
           .or_else(|| ast.child_by_field_name("name"))
           .and_then(|n| text_of(n, code));
@@ -138,7 +138,7 @@ fn push_node<'a>(
     }
 
     // `my_macro!(…)`
-    "macro_invocation" => ast
+    Kind::CallMacro => ast
         .child_by_field_name("macro")
         .and_then(|n| text_of(n, code))
         .unwrap_or_default(),
@@ -149,8 +149,8 @@ fn push_node<'a>(
 
   // If this is a `let` or `expression_statement` that *contains* a call,
   // prefer the first inner call identifier instead of the whole line.
-  if matches!(ast.kind(), "let_declaration" | "expression_statement") {
-    if let Some(inner) = first_call_ident(ast, code) {
+  if matches!(lookup(lang, ast.kind()), Kind::CallWrapper) {
+    if let Some(inner) = first_call_ident(ast, &lang, code) {
       text = inner;
     }
   }
@@ -202,11 +202,11 @@ fn build_sub<'a>(
   lang:  &str,
   code:  &'a [u8],
 ) -> Vec<NodeIndex> {
-  match ast.kind() {
+  match lookup(lang, ast.kind()) {
     // ─────────────────────────────────────────────────────────────────
     //  IF‑/ELSE: two branches that re‑merge afterwards
     // ─────────────────────────────────────────────────────────────────
-    "if_expression" => {
+    Kind::If => {
       // Condition node
       let cond = push_node(g, StmtKind::If, ast, lang, code);
       connect_all(g, preds, cond, EdgeKind::Seq);
@@ -246,7 +246,7 @@ fn build_sub<'a>(
       then_exits.into_iter().chain(else_exits).collect()
     }
 
-    "loop_expression" => {
+    Kind::InfiniteLoop => {
       // Synthetic header node
       let header = push_node(g, StmtKind::Loop, ast, lang, code);
       connect_all(g, preds, header, EdgeKind::Seq);
@@ -267,7 +267,7 @@ fn build_sub<'a>(
     // ─────────────────────────────────────────────────────────────────
     //  WHILE / FOR: classic loop with a back edge.
     // ─────────────────────────────────────────────────────────────────
-    "while_statement" | "for_statement" => {
+    Kind::While | Kind::For => {
       let header = push_node(g, StmtKind::Loop, ast, lang, code);
       connect_all(g, preds, header, EdgeKind::Seq);
 
@@ -293,17 +293,17 @@ fn build_sub<'a>(
     // ─────────────────────────────────────────────────────────────────
     //  Control-flow sinks (return / break / continue).
     // ─────────────────────────────────────────────────────────────────
-    "return_statement" => {
+    Kind::Return => {
       let ret = push_node(g, StmtKind::Return, ast, lang, code);
       connect_all(g, preds, ret, EdgeKind::Seq);
       Vec::new() // terminates this path
     }
-    "break_expression" | "break_statement" => {
+    Kind::Break => {
       let brk = push_node(g, StmtKind::Break, ast, lang, code);
       connect_all(g, preds, brk, EdgeKind::Seq);
       Vec::new()
     }
-    "continue_expression" | "continue_statement" => {
+    Kind::Continue => {
       let cont = push_node(g, StmtKind::Continue, ast, lang, code);
       connect_all(g, preds, cont, EdgeKind::Seq);
       Vec::new()
@@ -312,7 +312,7 @@ fn build_sub<'a>(
     // ─────────────────────────────────────────────────────────────────
     //  BLOCK: statements execute sequentially
     // ─────────────────────────────────────────────────────────────────
-    "source_file" | "block" => {
+    Kind::SourceFile | Kind::Block => {
       let mut cursor   = ast.walk();
       let mut frontier = preds.to_vec();
       for child in ast.children(&mut cursor) {
@@ -322,7 +322,7 @@ fn build_sub<'a>(
     }
 
     // Function item – create a header and dive into its body
-    "function_item" => {
+    Kind::Function => {
       let header = push_node(g, StmtKind::Seq, ast, lang, code);
       connect_all(g, preds, header, EdgeKind::Seq);
 
@@ -334,19 +334,19 @@ fn build_sub<'a>(
     }
 
     // Statements that **may** contain a call ---------------------------------
-    "let_declaration" | "expression_statement" => {
+    Kind::CallWrapper => {
       let mut cursor = ast.walk();
       
       if let Some(inner) = ast.children(&mut cursor).find(|c| matches!(
-        c.kind(),
-        "loop_expression" | "while_statement" | "for_statement" | "if_expression"
+        lookup(lang, c.kind()),
+        Kind::InfiniteLoop | Kind::While | Kind::For | Kind::If
     )) {
         return build_sub(inner, preds, g, lang, code);
       }
       
       let has_call = ast.children(&mut cursor).any(|c| matches!(
-        c.kind(),
-        "call_expression" | "method_call_expression" | "macro_invocation"
+        lookup(lang, c.kind()),
+        Kind::CallFn | Kind::CallMethod | Kind::CallMacro
     ));
 
       let kind = if has_call { StmtKind::Call } else { StmtKind::Seq };
@@ -356,12 +356,12 @@ fn build_sub<'a>(
     }
 
     // Trivia we drop completely ---------------------------------------------
-    "line_comment" | "block_comment"
-    | ";" | "," | "(" | ")" | "{" | "}" | "\n"
-    | "use_declaration"     
-    | "attribute_item"          
-    | "mod_item" | "type_item" 
-    => preds.to_vec(),
+    // "line_comment" | "block_comment"
+    // | ";" | "," | "(" | ")" | "{" | "}" | "\n"
+    // | "use_declaration"
+    // | "attribute_item"
+    // | "mod_item" | "type_item"
+    Kind::Trivia => preds.to_vec(),
 
     // ─────────────────────────────────────────────────────────────────
     //  Every other node = simple sequential statement

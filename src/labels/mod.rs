@@ -1,9 +1,12 @@
 mod rust;
 mod javascript;
+mod syntax;
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use bitflags::bitflags;
+use phf::Map;
+pub(crate) use crate::labels::syntax::Kind;
 
 /// A single rule: if the AST text equals (or ends with) one of the `matchers`,
 /// the node gets `label`.
@@ -45,6 +48,26 @@ static REGISTRY: Lazy<HashMap<&'static str, &'static [LabelRule]>> = Lazy::new(|
 
   m
 });
+
+
+type FastMap = &'static Map<&'static str, Kind>;
+
+pub(crate) static CLASSIFIERS: Lazy<HashMap<&'static str, FastMap>> = Lazy::new(|| {
+  let mut m = HashMap::new();
+  m.insert("rust",        &rust::KINDS);
+  m.insert("rs",          &rust::KINDS);
+
+  // m.insert("javascript",  &javascript::KINDS);
+  // m.insert("js",          &javascript::KINDS);
+
+  // todo: add more languages
+  m
+});
+
+#[inline(always)]
+pub fn lookup(lang: &str, raw: &str) -> Kind {
+  CLASSIFIERS.get(lang).and_then(|m| m.get(raw).copied()).unwrap_or(Kind::Other)
+}
 
 /// Try to classify a piece of syntax text.
 /// `lang` is the canonicalised language key (“rust”, “javascript”, …).

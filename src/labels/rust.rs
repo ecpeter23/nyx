@@ -1,4 +1,6 @@
 use crate::labels::{Cap, DataLabel, LabelRule};
+use crate::labels::syntax::{Kind};
+use phf::{phf_map, Map};
 
 pub static RULES: &[LabelRule] = &[
   // ─────────── Sources ───────────
@@ -32,3 +34,42 @@ pub static RULES: &[LabelRule] = &[
     label:    DataLabel::Sink(Cap::SHELL_ESCAPE),
   },
 ];
+
+pub static KINDS: Map<&'static str, Kind> = phf_map! {
+    // control-flow
+    "if_expression"        => Kind::If,
+    "loop_expression"      => Kind::InfiniteLoop,
+    "loop_statement"       => Kind::LoopBody,
+    "while_statement"      => Kind::While,
+    "for_statement"        => Kind::For,
+
+    "return_statement"     => Kind::Return,
+    "break_expression"     => Kind::Break,
+    "break_statement"      => Kind::Break,
+    "continue_expression"  => Kind::Continue,
+    "continue_statement"   => Kind::Continue,
+
+    // structure
+    "source_file"          => Kind::SourceFile,
+    "block"                => Kind::Block,
+    "function_item"        => Kind::Function,
+
+    // data-flow
+    "call_expression"        => Kind::CallFn,
+    "method_call_expression" => Kind::CallMethod,
+    "macro_invocation"       => Kind::CallMacro,
+    "let_declaration"        => Kind::CallWrapper,
+    "expression_statement"   => Kind::CallWrapper,
+    "assignment_expression"  => Kind::Assignment,
+
+    // trivia
+    "line_comment"     => Kind::Trivia,
+    "block_comment"    => Kind::Trivia,
+    ";" => Kind::Trivia, "," => Kind::Trivia,
+    "(" => Kind::Trivia, ")" => Kind::Trivia,
+    "{" => Kind::Trivia, "}" => Kind::Trivia, "\n" => Kind::Trivia,
+    "use_declaration"  => Kind::Trivia,
+    "attribute_item"   => Kind::Trivia,
+    "mod_item"         => Kind::Trivia,
+    "type_item"        => Kind::Trivia,
+};
