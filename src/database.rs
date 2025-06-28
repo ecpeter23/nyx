@@ -16,27 +16,34 @@ pub mod index {
     const SCHEMA: &str = r#"
         PRAGMA foreign_keys = ON;
 
-        CREATE TABLE IF NOT EXISTS files (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            project    TEXT    NOT NULL,
-            path       TEXT    NOT NULL,
-            hash       BLOB    NOT NULL,
-            mtime      INTEGER NOT NULL,
+        CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project TEXT NOT NULL,
+            path TEXT NOT NULL,
+            hash BLOB NOT NULL,
+            mtime INTEGER NOT NULL,
             scanned_at INTEGER NOT NULL,
             UNIQUE(project, path)
         );
 
-        CREATE TABLE IF NOT EXISTS issues (
-            file_id    INTEGER NOT NULL
+        CREATE TABLE IF NOT EXISTS issues (file_id INTEGER NOT NULL
                               REFERENCES files(id)
                               ON DELETE CASCADE,
-            rule_id    TEXT    NOT NULL,
-            severity   TEXT    NOT NULL,
-            line       INTEGER NOT NULL,
-            col        INTEGER NOT NULL,
-            PRIMARY KEY (file_id, rule_id, line, col)
-        );
+            rule_id TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            col INTEGER NOT NULL,
+            PRIMARY KEY (file_id, rule_id, line, col));
+
+        CREATE TABLE IF NOT EXISTS function_summaries (hash TEXT PRIMARY KEY,
+            project TEXT NOT NULL,
+            name TEXT NOT NULL,
+            lang TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            updated_at INTEGER NOT NULL);
     "#;
+
+    // TODO: ADD CLEANS FOR EACH TABLE BASED ON PROJECT WHICH RUNS ON CLEAN
+    // TODO: ADD DROP AND GIVE A CLI PARAMETER FOR DROP
 
     /// A single issue row, ready for insertion.
     #[derive(Debug, Clone)]
@@ -189,6 +196,50 @@ pub mod index {
             Ok(issue_iter.filter_map(Result::ok).collect())
         }
 
+        // pub fn upsert_summary(
+        //     &mut self,
+        //     project: &str,
+        //     path: &Path,
+        //     hash: &str,
+        //     s: &crate::summary::FuncSummary,
+        // ) -> NyxResult<()> {
+        //     let conn = self.c();
+        //     let now  = chrono::Utc::now().timestamp_millis(); // i64
+        //
+        //     conn.execute(
+        //         "INSERT INTO function_summaries (hash, project, name, lang, summary, updated_at)
+        //              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        //              ON CONFLICT(hash) DO UPDATE SET summary = excluded.summary,
+        //                                              updated_at = excluded.updated_at",
+        //         (
+        //             hash,
+        //             project,
+        //             &s.name,
+        //             path.extension().and_then(|e| e.to_str()).unwrap_or_default(),
+        //             serde_json::to_string(s).unwrap(), //TODO REPLACE UNWRAP
+        //             now,
+        //         ),
+        //     )?;
+        //     Ok(())
+        // }
+        //
+        // pub fn load_all_summaries(&self, project: &str) -> NyxResult<Vec<crate::summary::FuncSummary<'static>>> {
+        //     let mut stmt = self
+        //         .c()
+        //         .prepare("SELECT summary FROM function_summaries WHERE project = ?1")?;
+        //
+        //     let iter = stmt.query_map([project], |row| {
+        //         let json: String = row.get(0)?;
+        //         Ok(serde_json::from_str::<crate::summary::FuncSummary>(json.as_str()).unwrap()) // TODO: REPLACE UNWRAP
+        //     })?;
+        //
+        //     Ok(iter
+        //         .collect::<Result<Vec<_>, _>>()?
+        //         .into_iter()
+        //         .map(|s| unsafe { std::mem::transmute::<_, crate::summary::FuncSummary<'static>>(s) })
+        //         .collect())
+        // }
+
         /// gets files from the database
         pub fn get_files(&self, project: &str) -> NyxResult<Vec<PathBuf>> {
             let mut stmt = self.c().prepare(
@@ -214,6 +265,7 @@ pub mod index {
 
         DROP TABLE IF EXISTS issues;
         DROP TABLE IF EXISTS files;
+        DROP TABLE IF EXISTS function_summaries;
 
         PRAGMA foreign_keys = ON;
         VACUUM;

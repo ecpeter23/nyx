@@ -68,7 +68,7 @@ pub fn handle(
             println!("{}", style(path).blue().underlined());
             for d in issues {
                 println!(
-                    "  {:>4}:{:<4}  [{}]  {}",
+                    "  {:>4}:{:<4}  [{:}]  {:}",
                     d.line,
                     d.col,
                     d.severity,
@@ -145,6 +145,17 @@ pub fn scan_with_index_parallel(
             } else {
                 idx.get_issues_from_file(&path).unwrap_or_default()
             };
+
+            match cfg.scanner.mode {
+                crate::utils::config::AnalysisMode::Ast => {
+                    diags.retain(|d| !d.id.starts_with("taint"));
+                }
+                crate::utils::config::AnalysisMode::Taint => {
+                    diags.retain(|d| d.id.starts_with("taint"));
+                }
+                crate::utils::config::AnalysisMode::Full => {}
+            }
+
             if !diags.is_empty() {
                 diag_map
                     .entry(path.to_string_lossy().to_string())

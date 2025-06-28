@@ -9,7 +9,7 @@ pub fn get_project_info(project_path: &Path, config_dir: &Path) -> NyxResult<(St
         .ok_or_else(|| NyxError::Other("Unable to determine project name".into()))?;
 
     let db_name = sanitize_project_name(project_name);
-    let db_path = config_dir.join(format!("{}.sqlite", db_name));
+    let db_path = config_dir.join(format!("{db_name}.sqlite"));
 
     Ok((project_name.to_owned(), db_path))
 }
@@ -41,7 +41,7 @@ fn sanitize_project_name_is_idempotent_and_lossless_enough() {
     ];
 
     for (input, expected) in samples {
-        assert_eq!(sanitize_project_name(input), expected, "input: {}", input);
+        assert_eq!(sanitize_project_name(input), expected, "input: {input}");
         assert_eq!(sanitize_project_name(expected), expected);
     }
 }

@@ -1,13 +1,11 @@
 <div align="center">
   <img src="assets/logo.png" alt="nyx logo" width="300"/>
 
-# Nyx
-
 **Fast, cross-language cli vulnerability scanner.**
 
 [![crates.io](https://img.shields.io/crates/v/nyx-scanner.svg)](https://crates.io/crates/nyx-scanner)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/ecpeter23/nyx/ci.yml?branch=master)](https://github.com/ecpeter23/nyx/actions)
 </div>
 
@@ -18,7 +16,7 @@
 **Nyx** is a lightweight lightning-fast Rust‑native command‑line tool that detects potentially dangerous code patterns across several programming languages. It combines the accuracy of [`tree‑sitter`](https://tree-sitter.github.io/) parsing with a curated rule set and an optional SQLite‑backed index to deliver fast, repeatable scans on projects of any size.
 
 > **Project status – Alpha**   
-> Nyx is under active development. The public interface, rule set, and output formats may change without notice while we stabilize the core. Please pin exact versions in production environments.
+> Nyx is under active development. The public interface, rule set, and output formats may change without notice while we stabilise the core. The new CFG + taint engine is experimental and Rust-only for now – please report any crashes or false-positives. Pin exact versions in production environments
 
 ---
 
@@ -50,17 +48,49 @@
 
 ## Installation
 
+### Install crate
+```bash
+$ cargo install nyx-scanner
+```
+
+### Install Github release
+1. Navigate to the [Releases](https://github.com/ecpeter23/nyx/releases) page of the repository.
+2. Download the appropriate binary for your system:
+
+    ```nyx-x86_64-unknown-linux-gnu.zip``` for Linux
+
+    ```nyx-x86_64-pc-windows-msvc.zip``` for Windows
+
+    ```nyx-x86_64-apple-darwin.zip``` or ```nyx-aarch64-apple-darwin.zip``` for macOS (Intel or Apple Silicon)
+
+3. Unzip the file and move the executable to a directory in your system PATH:
+    ```bash
+    # Example for Unix systems
+    unzip nyx-x86_64-unknown-linux-gnu.zip
+    chmod +x nyx
+    sudo mv nyx /usr/local/bin/
+    ```
+    ```bash
+    # Example for Windows in PowerShell
+    Expand-Archive -Path nyx-x86_64-pc-windows-msvc.zip -DestinationPath .
+    Move-Item -Path .\nyx.exe -Destination "C:\Program Files\Nyx\"  # Add to PATH manually if needed
+    ```
+   
+4. Verify the installation:
+     ```bash
+    nyx --version
+    ```
 ### Build from source
 
 ```bash
-$ git clone https://github.com/<your‑org>/nyx.git
+$ git clone https://github.com/ecpeter23/nyx.git
 $ cd nyx
 $ cargo build --release
 # optional – copy the binary into PATH
 $ cargo install --path .
 ```
 
-Nyx targets **stable Rust 1.78 or later**.
+Nyx targets **stable Rust 1.85 or later**.
 
 ---
 
@@ -142,15 +172,26 @@ A fully documented `nyx.conf` is generated automatically on first run.
 
 ## Roadmap
 
-| Area                  | Planned Improvements                                                      |
-|-----------------------|---------------------------------------------------------------------------|
-| More language support | Plans to create rule sets for over 100 languages for maximum coverage     |
-| Control‑flow analysis | Generation of CFGs for deeper reasoning about execution paths             |
-| Taint tracking        | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks |
-| Output formats        | Full SARIF 2.1.0, JUnit XML, HTML report generator                        |
-| Rule updates          | Remote rule feed with signature verification                              |
+| Area                  | Planned Improvements                                                                                  |
+|-----------------------|-------------------------------------------------------------------------------------------------------|
+| More language support | Plans to create rule sets for over 100 languages for maximum coverage                                 |
+| Control‑flow analysis | Inter‑procedural function summaries. Cap label propagation & bit‑flag checks. Loop/branch sensitivity |
+| Taint tracking        | Intra‑ / inter‑procedural tracing of untrusted data from sources to sinks                             |
+| Output formats        | Full SARIF 2.1.0, JUnit XML, HTML report generator                                                    |
+| Rule updates          | Remote rule feed with signature verification                                                          |
+| Performance & UX      | Incremental CFG cache, progress‑bar UX, smart file‑watch re‑scan                                      |
 
 Community feedback will help shape priorities; please open an issue to discuss proposed changes.
+
+---
+
+## Experimental Features & Feedback
+
+The new Rust intra‑procedural CFG + taint engine is not enabled.
+
+Expect rough edges: slightly slower scans, occasional false positives, limited language coverage.
+
+Please open an issue for every crash, panic, or suspicious result – attach the minimal code snippet and mention the Nyx version.
 
 ---
 

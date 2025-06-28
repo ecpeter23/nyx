@@ -92,7 +92,7 @@ static REGISTRY: Lazy<HashMap<&'static str, &'static [Pattern]>> = Lazy::new(|| 
     m.insert("cpp", cpp::PATTERNS);
     m.insert("c++", cpp::PATTERNS);
 
-    // ---- Other languages in the folder ----
+    // ---- Other patterns in the folder ----
     m.insert("java", java::PATTERNS);
     m.insert("go", go::PATTERNS);
     m.insert("php", php::PATTERNS);
@@ -101,14 +101,14 @@ static REGISTRY: Lazy<HashMap<&'static str, &'static [Pattern]>> = Lazy::new(|| 
     m.insert("ruby", ruby::PATTERNS);
     m.insert("rb", ruby::PATTERNS);
 
-    tracing::debug!("AST-pattern registry initialised ({} languages)", m.len());
+    tracing::debug!("AST-pattern registry initialised ({} patterns)", m.len());
 
     m
 });
 
 /// Return all patterns for the requested language (case-insensitive).
 ///
-/// Unknown languages yield an **empty** `Vec`.
+/// Unknown patterns yield an **empty** `Vec`.
 pub fn load(lang: &str) -> Vec<Pattern> {
     let key = lang.to_ascii_lowercase();
     REGISTRY.get(key.as_str()).copied().unwrap_or(&[]).to_vec()

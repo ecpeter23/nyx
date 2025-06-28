@@ -8,9 +8,21 @@ use toml;
 
 static DEFAULT_CONFIG_TOML: &str = include_str!("../../default-nyx.conf");
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AnalysisMode {
+    #[default]
+    Full,
+    Ast,
+    Taint,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct ScannerConfig {
+    /// The analysis mode to use.
+    pub mode: AnalysisMode,
+
     /// The minimum severity level to output
     pub min_severity: Severity,
 
@@ -47,6 +59,7 @@ pub struct ScannerConfig {
 impl Default for ScannerConfig {
     fn default() -> Self {
         Self {
+            mode: AnalysisMode::Full,
             min_severity: Severity::Low,
             max_file_size_mb: None,
             excluded_extensions: vec![
@@ -151,6 +164,9 @@ pub struct PerformanceConfig {
     /// capacity = threads × this
     pub channel_multiplier: usize,
 
+    /// The stack size for Rayon threads, in bytes.
+    pub rayon_thread_stack_size: usize,
+
     /// Timeout on individual files // TODO: IMPLEMENT
     pub scan_timeout_secs: Option<u64>,
 
@@ -167,6 +183,7 @@ impl Default for PerformanceConfig {
             worker_threads: None,
             batch_size: 100usize,
             channel_multiplier: 4usize,
+            rayon_thread_stack_size: 8 * 1024 * 1024, // 2 MiB
             scan_timeout_secs: None,
             memory_limit_mb: 512,
         }
@@ -236,6 +253,7 @@ fn create_example_config(config_dir: &Path) -> NyxResult<()> {
 /// supply new exclusions and overriding everything else.
 fn merge_configs(mut default: Config, user: Config) -> Config {
     // --- ScannerConfig ---
+    default.scanner.mode = user.scanner.mode;
     default.scanner.min_severity = user.scanner.min_severity;
     default.scanner.max_file_size_mb = user.scanner.max_file_size_mb;
     default.scanner.read_global_ignore = user.scanner.read_global_ignore;
@@ -277,6 +295,7 @@ fn merge_configs(mut default: Config, user: Config) -> Config {
     default.performance.worker_threads = user.performance.worker_threads;
     default.performance.batch_size = user.performance.batch_size;
     default.performance.channel_multiplier = user.performance.channel_multiplier;
+    default.performance.rayon_thread_stack_size = user.performance.rayon_thread_stack_size;
     default.performance.scan_timeout_secs = user.performance.scan_timeout_secs;
     default.performance.memory_limit_mb = user.performance.memory_limit_mb;
 
