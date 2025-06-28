@@ -11,10 +11,10 @@ static DEFAULT_CONFIG_TOML: &str = include_str!("../../default-nyx.conf");
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AnalysisMode {
-  #[default]
-  Full,
-  Ast,
-  Taint,
+    #[default]
+    Full,
+    Ast,
+    Taint,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -163,7 +163,7 @@ pub struct PerformanceConfig {
 
     /// capacity = threads × this
     pub channel_multiplier: usize,
-  
+
     /// The stack size for Rayon threads, in bytes.
     pub rayon_thread_stack_size: usize,
 

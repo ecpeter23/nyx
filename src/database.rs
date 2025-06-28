@@ -205,7 +205,7 @@ pub mod index {
         // ) -> NyxResult<()> {
         //     let conn = self.c();
         //     let now  = chrono::Utc::now().timestamp_millis(); // i64
-        // 
+        //
         //     conn.execute(
         //         "INSERT INTO function_summaries (hash, project, name, lang, summary, updated_at)
         //              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -222,17 +222,17 @@ pub mod index {
         //     )?;
         //     Ok(())
         // }
-        // 
+        //
         // pub fn load_all_summaries(&self, project: &str) -> NyxResult<Vec<crate::summary::FuncSummary<'static>>> {
         //     let mut stmt = self
         //         .c()
         //         .prepare("SELECT summary FROM function_summaries WHERE project = ?1")?;
-        // 
+        //
         //     let iter = stmt.query_map([project], |row| {
         //         let json: String = row.get(0)?;
         //         Ok(serde_json::from_str::<crate::summary::FuncSummary>(json.as_str()).unwrap()) // TODO: REPLACE UNWRAP
         //     })?;
-        //     
+        //
         //     Ok(iter
         //         .collect::<Result<Vec<_>, _>>()?
         //         .into_iter()

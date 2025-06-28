@@ -3,7 +3,7 @@ pub mod index;
 pub mod list;
 pub mod scan;
 
-use crate::cli::{Commands};
+use crate::cli::Commands;
 use crate::errors::NyxResult;
 use crate::patterns::Severity;
 use crate::utils::config::{AnalysisMode, Config};

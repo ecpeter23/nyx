@@ -1,13 +1,13 @@
 mod ast;
+mod cfg;
 mod cli;
 mod commands;
 mod database;
 mod errors;
+mod labels;
 mod patterns;
 mod utils;
 mod walk;
-mod cfg;
-mod labels;
 
 use crate::errors::NyxResult;
 use crate::utils::Config;
@@ -62,9 +62,9 @@ fn main() -> NyxResult<()> {
     let mut config = Config::load(config_dir)?;
 
     rayon::ThreadPoolBuilder::new()
-      .stack_size(config.performance.rayon_thread_stack_size) 
-      .build_global()
-      .expect("set rayon stack size");
+        .stack_size(config.performance.rayon_thread_stack_size)
+        .build_global()
+        .expect("set rayon stack size");
 
     commands::handle_command(cli.command, database_dir, &mut config)?;
 

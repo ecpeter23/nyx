@@ -1,13 +1,13 @@
+use crate::cfg::{analyse_function, build_cfg};
 use crate::commands::scan::Diag;
 use crate::errors::{NyxError, NyxResult};
+use crate::patterns::Severity;
+use crate::utils::config::AnalysisMode;
 use crate::utils::ext::lowercase_ext;
 use crate::utils::{Config, query_cache};
 use std::cell::RefCell;
 use std::path::Path;
 use tree_sitter::{Language, QueryCursor, StreamingIterator};
-use crate::cfg::{analyse_function, build_cfg};
-use crate::patterns::Severity;
-use crate::utils::config::AnalysisMode;
 
 thread_local! {
     static PARSER: RefCell<tree_sitter::Parser> = RefCell::new(tree_sitter::Parser::new());
@@ -15,12 +15,12 @@ thread_local! {
 
 /// Convenience alias for node indices.
 fn byte_offset_to_point(tree: &tree_sitter::Tree, byte: usize) -> tree_sitter::Point {
-  // `descendant_for_byte_range` gives us *some* node that starts at `byte`,
-  // `start_position` turns that into rows & columns (both 0-based)
-  tree.root_node()
-    .descendant_for_byte_range(byte, byte)
-    .map(|n| n.start_position())
-    .unwrap_or_else(|| tree_sitter::Point { row: 0, column: 0 })
+    // `descendant_for_byte_range` gives us *some* node that starts at `byte`,
+    // `start_position` turns that into rows & columns (both 0-based)
+    tree.root_node()
+        .descendant_for_byte_range(byte, byte)
+        .map(|n| n.start_position())
+        .unwrap_or_else(|| tree_sitter::Point { row: 0, column: 0 })
 }
 
 pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag>> {
@@ -59,7 +59,7 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
             .parse(&*bytes, None)
             .ok_or_else(|| NyxError::Other("tree-sitter failed".into()))
     })?;
-  
+
     let mut out = Vec::new();
 
     if cfg.scanner.mode == AnalysisMode::Full || cfg.scanner.mode == AnalysisMode::Taint {
@@ -67,55 +67,51 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
         let (cfg_graph, entry) = build_cfg(&_tree, &bytes, lang_slug);
 
         for p in analyse_function(&cfg_graph, entry) {
-          let src_byte = cfg_graph[p.first().copied().unwrap()].span.0;
-          let point    = byte_offset_to_point(&_tree, src_byte);
+            let src_byte = cfg_graph[p.first().copied().unwrap()].span.0;
+            let point = byte_offset_to_point(&_tree, src_byte);
 
-          out.push(Diag {
-            path:     path.to_string_lossy().into_owned(),
-            line:     point.row + 1,
-            col:      point.column + 1,
-            severity: Severity::High,
-            id:       "taint-unsanitised-flow".into(),
-          });
+            out.push(Diag {
+                path: path.to_string_lossy().into_owned(),
+                line: point.row + 1,
+                col: point.column + 1,
+                severity: Severity::High,
+                id: "taint-unsanitised-flow".into(),
+            });
         }
     }
 
     if cfg.scanner.mode == AnalysisMode::Full || cfg.scanner.mode == AnalysisMode::Ast {
-      let root = _tree.root_node();
+        let root = _tree.root_node();
 
-      let compiled = query_cache::for_lang(lang_slug, ts_lang);
-      let mut cursor = QueryCursor::new();
+        let compiled = query_cache::for_lang(lang_slug, ts_lang);
+        let mut cursor = QueryCursor::new();
 
-      for cq in compiled.iter() {
-        if cfg.scanner.min_severity <= cq.meta.severity {
-          continue;
+        for cq in compiled.iter() {
+            if cfg.scanner.min_severity <= cq.meta.severity {
+                continue;
+            }
+            let mut matches = cursor.matches(&cq.query, root, &*bytes);
+            while let Some(m) = matches.next() {
+                if let Some(cap) = m.captures.iter().find(|c| c.index == 0) {
+                    let point = cap.node.start_position();
+                    out.push(Diag {
+                        path: path.to_string_lossy().into_owned(),
+                        line: point.row + 1,
+                        col: point.column + 1,
+                        severity: cq.meta.severity,
+                        id: cq.meta.id.to_owned(),
+                    });
+                }
+            }
         }
-        let mut matches = cursor.matches(&cq.query, root, &*bytes);
-        while let Some(m) = matches.next() {
-          if let Some(cap) = m.captures.iter().find(|c| c.index == 0) {
-            let point = cap.node.start_position();
-            out.push(Diag {
-              path: path.to_string_lossy().into_owned(),
-              line: point.row + 1,
-              col: point.column + 1,
-              severity: cq.meta.severity,
-              id: cq.meta.id.to_owned(),
-            });
-          }
-        }
-      }
     }
 
-  // Check to ensure no duplicates (DOUBLE-CHECK EFFICIENCY)
-    out.sort_by(|a, b| (a.line, a.col, &a.id, a.severity)
-      .cmp(&(b.line, b.col, &b.id, b.severity)));
+    // Check to ensure no duplicates (DOUBLE-CHECK EFFICIENCY)
+    out.sort_by(|a, b| (a.line, a.col, &a.id, a.severity).cmp(&(b.line, b.col, &b.id, b.severity)));
     out.dedup_by(|a, b| {
-      a.line == b.line &&
-        a.col  == b.col  &&
-        a.id   == b.id   &&
-        a.severity == b.severity
+        a.line == b.line && a.col == b.col && a.id == b.id && a.severity == b.severity
     });
-  
+
     Ok(out)
 }
 

@@ -38,7 +38,7 @@ pub enum Commands {
 
         #[arg(long)]
         cfg_only: bool,
-      
+
         #[arg(long)]
         all_targets: bool,
     },
