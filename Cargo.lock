@@ -634,6 +634,7 @@ dependencies = [
  "dashmap",
  "directories",
  "ignore",
+ "log",
  "num_cpus",
  "once_cell",
  "petgraph",

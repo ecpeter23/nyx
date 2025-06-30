@@ -8,6 +8,7 @@ mod labels;
 mod patterns;
 mod utils;
 mod walk;
+mod taint;
 
 use crate::errors::NyxResult;
 use crate::utils::Config;

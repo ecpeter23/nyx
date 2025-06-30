@@ -3,10 +3,8 @@ use petgraph::prelude::*;
 use tracing::debug;
 use tree_sitter::{Node, Tree};
 
-use crate::labels::{DataLabel, Kind, classify, lookup};
-use std::collections::HashSet;
-use std::hash::{DefaultHasher, Hash, Hasher};
-
+use crate::labels::{DataLabel, Kind, classify, lookup, Cap};
+use std::collections::{HashMap, HashSet};
 // WHAT WE STILL NEED TO DO:
 // todo: add the cap labels and remove the bit flags after each sanitizer, checking the bit flags with the sink
 //
@@ -20,6 +18,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 // then, after we analyze all the functions, we will see if any of the potentially tainted functions are actually tainted
 //
 // 3.
+
+// Questions: Do we want to analyze taint on a per function basis as we are building the CFG, or do we want to analyze the whole CFG at once?
+
 
 /// -------------------------------------------------------------------------
 ///  Public AST‑to‑CFG data structures
@@ -55,6 +56,7 @@ pub struct NodeInfo {
 }
 
 pub type Cfg = Graph<NodeInfo, EdgeKind>;
+type FuncSummaries = HashMap<String, (NodeIndex, NodeIndex, Option<DataLabel>)>;
 
 // -------------------------------------------------------------------------
 //                      Utility helpers
@@ -62,7 +64,7 @@ pub type Cfg = Graph<NodeInfo, EdgeKind>;
 
 /// Return the text of a node.
 #[inline]
-fn text_of<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
+pub(crate) fn text_of<'a>(n: Node<'a>, code: &'a [u8]) -> Option<String> {
     std::str::from_utf8(&code[n.start_byte()..n.end_byte()])
         .ok()
         .map(|s| s.to_string())
@@ -103,6 +105,64 @@ fn first_call_ident<'a>(n: Node<'a>, lang: &str, code: &'a [u8]) -> Option<Strin
         }
     }
     None
+}
+
+/// Recursively collect every identifier that occurs inside `n`.
+fn collect_idents(n: Node, code: &[u8], out: &mut Vec<String>) {
+    if n.kind() == "identifier" {
+        if let Some(txt) = crate::cfg::text_of(n, code) {
+            out.push(txt);
+        }
+    } else {
+        let mut c = n.walk();
+        for ch in n.children(&mut c) {
+            collect_idents(ch, code, out);
+        }
+    }
+}
+
+/// Return `(defines, uses)` for the AST fragment `ast`.
+fn def_use(ast: Node, lang: &str, code: &[u8]) -> (Option<String>, Vec<String>) {
+    match ast.kind() {
+        // `let <pat> = <val>;`
+        "let_declaration" => {
+            let mut defs = None;
+            let mut uses = Vec::new();
+
+            if let Some(pat) = ast.child_by_field_name("pattern") {
+                // first identifier inside the pattern = variable name
+                let mut tmp = Vec::<String>::new();
+                collect_idents(pat, code, &mut tmp);
+                defs = tmp.into_iter().next();
+            }
+            if let Some(val) = ast.child_by_field_name("value") {
+                collect_idents(val, code, &mut uses);
+            }
+            (defs, uses)
+        }
+
+        // Plain assignment `x = y + z`
+        "assignment_expression" => {
+            let mut defs = None;
+            let mut uses = Vec::new();
+            if let Some(lhs) = ast.child_by_field_name("left") {
+                let mut tmp = Vec::<String>::new();
+                collect_idents(lhs, code, &mut tmp);
+                defs = tmp.pop();
+            }
+            if let Some(rhs) = ast.child_by_field_name("right") {
+                collect_idents(rhs, code, &mut uses);
+            }
+            (defs, uses)
+        }
+
+        // everything else – no definition, but may read vars
+        _ => {
+            let mut uses = Vec::new();
+            collect_idents(ast, code, &mut uses);
+            (None, uses)
+        }
+    }
 }
 
 /// Create a node in one short borrow and optionally attach a taint label.
@@ -164,7 +224,7 @@ fn push_node<'a>(
 
     /* ── 3.  GRAPH INSERTION + DEBUG ──────────────────────────────────── */
 
-    let (defines, uses) = def_use(ast, code);
+    let (defines, uses) = def_use(ast, lang, code);
 
     let idx = g.add_node(NodeInfo {
         kind,
@@ -186,6 +246,46 @@ fn push_node<'a>(
     idx
 }
 
+// DEBUG TODO REMOVE
+fn dump_node(node: Node, source: &[u8], indent: usize) {
+    let indent_str = " ".repeat(indent);
+    // Basic info
+    log::debug!(
+        target: "cfg-experimental",
+        "{}kind = {:?}, bytes = {}..{}, positions = {:?}..{:?}",
+        indent_str,
+        node.kind(),
+        node.start_byte(),
+        node.end_byte(),
+        node.start_position(),
+        node.end_position()
+    );
+
+    // The actual source text covered by the node
+    if let Ok(text) = node.utf8_text(source) {
+        log::debug!(target: "cfg-experimental", "{}text = {:?}", indent_str, text);
+    }
+
+    // S-expression of this node + all its children
+    log::debug!(
+        target: "cfg-experimental",
+        "{}sexp = {}",
+        indent_str,
+        node.to_sexp()
+    );
+
+    // Field name (if any) on the parent’s side
+    // if let Some(field) = node.field_name() {
+    //     log::debug!(target: "cfg-experimental", "{}field name = {:?}", indent_str, field);
+    // }
+
+    // Recurse into children
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        dump_node(child, source, indent + 2);
+    }
+}
+
 /// Add the same edge (of the same kind) from every node in `froms` to `to`.
 #[inline]
 fn connect_all(g: &mut Cfg, froms: &[NodeIndex], to: NodeIndex, kind: EdgeKind) {
@@ -205,11 +305,13 @@ fn build_sub<'a>(
     g: &mut Cfg,
     lang: &str,
     code: &'a [u8],
+    summaries: &mut FuncSummaries,
 ) -> Vec<NodeIndex> {
     match lookup(lang, ast.kind()) {
         // ─────────────────────────────────────────────────────────────────
         //  IF‑/ELSE: two branches that re‑merge afterwards
         // ─────────────────────────────────────────────────────────────────
+        // todo fix
         Kind::If => {
             // Condition node
             let cond = push_node(g, StmtKind::If, ast, lang, code);
@@ -227,7 +329,7 @@ fn build_sub<'a>(
 
             // THEN branch
             let then_exits = if let Some(b) = then_block {
-                let exits = build_sub(b, &[cond], g, lang, code);
+                let exits = build_sub(b, &[cond], g, lang, code, summaries);
                 // True edges leave the condition
                 if let Some(&first) = exits.first() {
                     connect_all(g, &[cond], first, EdgeKind::True);
@@ -239,7 +341,7 @@ fn build_sub<'a>(
 
             // ELSE branch
             let else_exits = if let Some(b) = else_block {
-                let exits = build_sub(b, &[cond], g, lang, code);
+                let exits = build_sub(b, &[cond], g, lang, code, summaries);
                 if let Some(&first) = exits.first() {
                     connect_all(g, &[cond], first, EdgeKind::False);
                 }
@@ -263,7 +365,7 @@ fn build_sub<'a>(
 
             // The body is the single `block` child
             let body = ast.child_by_field_name("body").expect("loop without body");
-            let body_exits = build_sub(body, &[header], g, lang, code);
+            let body_exits = build_sub(body, &[header], g, lang, code, summaries);
 
             // Back-edge from every linear exit to header
             for &e in &body_exits {
@@ -289,7 +391,7 @@ fn build_sub<'a>(
                 })
                 .expect("loop without body");
 
-            let body_exits = build_sub(body, &[header], g, lang, code);
+            let body_exits = build_sub(body, &[header], g, lang, code, summaries);
 
             // Back‑edge for every linear exit → header.
             for &e in &body_exits {
@@ -325,21 +427,102 @@ fn build_sub<'a>(
             let mut cursor = ast.walk();
             let mut frontier = preds.to_vec();
             for child in ast.children(&mut cursor) {
-                frontier = build_sub(child, &frontier, g, lang, code);
+                frontier = build_sub(child, &frontier, g, lang, code, summaries);
             }
             frontier
         }
 
         // Function item – create a header and dive into its body
         Kind::Function => {
-            let header = push_node(g, StmtKind::Seq, ast, lang, code);
-            connect_all(g, preds, header, EdgeKind::Seq);
+            // 1) create a header node for this fn
+            let fn_name = ast
+                .child_by_field_name("name")
+                .and_then(|n| text_of(n, code))
+                .unwrap_or_else(|| "<anon>".to_string());
+            let entry_idx = push_node(g, StmtKind::Seq, ast, lang, code);
+            connect_all(g, preds, entry_idx, EdgeKind::Seq);
 
-            if let Some(body) = ast.child_by_field_name("body") {
-                build_sub(body, &[header], g, lang, code)
-            } else {
-                vec![header] // declaration w/o body
+            // 2) build its body
+            let body         = ast.child_by_field_name("body").expect("fn w/o body");
+            let body_exits   = build_sub(body, &[entry_idx], g, lang, code, summaries);
+
+        // ───── 3) light-weight dataflow + capture both explicit & implicit returns ─
+                   let mut var_taint   = HashMap::<String, Cap>::new();
+                   let mut node_bits   = HashMap::<NodeIndex, Cap>::new();
+                   let mut fn_src_bits = Cap::empty();
+
+                   // first, sweep *all* nodes in this function and record their out_bits
+                   for idx in g.node_indices() {
+                       let info = &g[idx];
+                       if info.span.0 < ast.start_byte() || info.span.1 > ast.end_byte() {
+                           continue;
+                       }
+
+                   //  a) incoming taint from any vars we read
+                   let mut in_bits = Cap::empty();
+                   for u in &info.uses {
+                       if let Some(b) = var_taint.get(u) {
+                           in_bits |= *b;
+                       }
+                   }
+
+                   //  b) apply this node’s own label
+                   let mut out_bits = in_bits;
+                   if let Some(lab) = &info.label {
+                       match *lab {
+                           DataLabel::Source(bits)    => out_bits |= bits,
+                           DataLabel::Sanitizer(bits) => out_bits &= !bits,
+                           DataLabel::Sink(_)         => { /* no-op */ }
+                       }
+                   }
+
+                   //  c) write it back to the var we define (if any)
+                   if let Some(def) = &info.defines {
+                       if out_bits.is_empty() {
+                           var_taint.remove(def);
+                       } else {
+                           var_taint.insert(def.clone(), out_bits);
+                       }
+                   }
+
+                   //  d) stash it for later
+                   node_bits.insert(idx, out_bits);
+               }
+
+               // now fold in any *explicit* returns
+               for (&idx, &bits) in &node_bits {
+                   if g[idx].kind == StmtKind::Return {
+                       fn_src_bits |= bits;
+                   }
+               }
+
+               // …and *implicit* returns via fall-through from each exit predecessor
+               for &pred in &body_exits {
+                   if let Some(&bits) = node_bits.get(&pred) {
+                       fn_src_bits |= bits;
+                   }
+               }
+
+               let fn_label = fn_src_bits.is_empty()
+                   .then(|| None)
+                   .unwrap_or(Some(DataLabel::Source(fn_src_bits)));
+
+            /* ───── 4) synthesise an explicit exit-node and wire it up ──────────── */
+            let exit_idx = g.add_node(NodeInfo {
+                kind: StmtKind::Return,
+                span: (ast.start_byte(), ast.end_byte()),
+                label: None,
+                defines: None,
+                uses: Vec::new(),
+            });
+            for &b in &body_exits {
+                connect_all(g, &[b], exit_idx, EdgeKind::Seq);
             }
+
+            /* ───── 5) store the summary – *don’t* overwrite it later! ──────────── */
+            summaries.insert(fn_name.clone(), (entry_idx, exit_idx, fn_label));
+
+            vec![exit_idx]
         }
 
         // Statements that **may** contain a call ---------------------------------
@@ -352,7 +535,7 @@ fn build_sub<'a>(
                     Kind::InfiniteLoop | Kind::While | Kind::For | Kind::If
                 )
             }) {
-                return build_sub(inner, preds, g, lang, code);
+                return build_sub(inner, preds, g, lang, code, summaries);
             }
 
             let has_call = ast.children(&mut cursor).any(|c| {
@@ -373,11 +556,6 @@ fn build_sub<'a>(
         }
 
         // Trivia we drop completely ---------------------------------------------
-        // "line_comment" | "block_comment"
-        // | ";" | "," | "(" | ")" | "{" | "}" | "\n"
-        // | "use_declaration"
-        // | "attribute_item"
-        // | "mod_item" | "type_item"
         Kind::Trivia => preds.to_vec(),
 
         // ─────────────────────────────────────────────────────────────────
@@ -402,10 +580,11 @@ fn build_sub<'a>(
 ///   the graph compact.
 /// * Wires a synthetic `Entry` node in front and a synthetic `Exit` node after
 ///   all real sinks.
-pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg, NodeIndex) {
+pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg, NodeIndex, FuncSummaries) {
     debug!(target: "cfg", "Building CFG for {:?}", tree.root_node());
 
     let mut g: Cfg = Graph::with_capacity(128, 256);
+    let mut summaries = FuncSummaries::new();
     let entry = g.add_node(NodeInfo {
         kind: StmtKind::Entry,
         span: (0, 0),
@@ -422,8 +601,8 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg,
     });
 
     // Build the body below the synthetic ENTRY.
-    let exits = build_sub(tree.root_node(), &[entry], &mut g, lang, code);
-
+    let exits = build_sub(tree.root_node(), &[entry], &mut g, lang, code, &mut summaries);
+    debug!(target: "cfg", "exits: {:?}", exits);
     // Wire every real exit to our synthetic EXIT node.
     for e in exits {
         connect_all(&mut g, &[e], exit, EdgeKind::Seq);
@@ -472,358 +651,22 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg,
         debug!(target: "cfg", "dominator tree computed (len = {:?})", doms);
     }
 
-    (g, entry)
+    (g, entry, summaries)
 }
 
-/* ---------- TAINT-ANALYSIS PASSES ---------- */
-/// Recursively collect every identifier that occurs inside `n`.
-fn collect_idents(n: Node, code: &[u8], out: &mut Vec<String>) {
-    if n.kind() == "identifier" {
-        if let Some(txt) = text_of(n, code) {
-            out.push(txt);
-        }
-    } else {
-        let mut c = n.walk();
-        for ch in n.children(&mut c) {
-            collect_idents(ch, code, out);
-        }
+pub(crate) fn dump_cfg(g: &Cfg) {
+    debug!(target: "taint", "CFG DUMP: nodes = {}, edges = {}", g.node_count(), g.edge_count());
+    for idx in g.node_indices() {
+        debug!(target: "taint", "  node {:>3}: {:?}", idx.index(), g[idx]);
+    }
+    for e in g.edge_references() {
+        debug!(
+            target: "taint",
+            "  edge {:>3} → {:<3} ({:?})",
+            e.source().index(),
+            e.target().index(),
+            e.weight()
+        );
     }
 }
 
-/// Return `(defines, uses)` for the AST fragment `ast`.
-fn def_use(ast: Node, code: &[u8]) -> (Option<String>, Vec<String>) {
-    match ast.kind() {
-        // `let <pat> = <val>;`
-        "let_declaration" => {
-            let mut defs = None;
-            let mut uses = Vec::new();
-
-            if let Some(pat) = ast.child_by_field_name("pattern") {
-                // first identifier inside the pattern = variable name
-                let mut tmp = Vec::<String>::new();
-                collect_idents(pat, code, &mut tmp);
-                defs = tmp.into_iter().next();
-            }
-            if let Some(val) = ast.child_by_field_name("value") {
-                collect_idents(val, code, &mut uses);
-            }
-            (defs, uses)
-        }
-
-        // Plain assignment `x = y + z`
-        "assignment_expression" => {
-            let mut defs = None;
-            let mut uses = Vec::new();
-            if let Some(lhs) = ast.child_by_field_name("left") {
-                let mut tmp = Vec::<String>::new();
-                collect_idents(lhs, code, &mut tmp);
-                defs = tmp.pop();
-            }
-            if let Some(rhs) = ast.child_by_field_name("right") {
-                collect_idents(rhs, code, &mut uses);
-            }
-            (defs, uses)
-        }
-
-        // everything else – no definition, but may read vars
-        _ => {
-            let mut uses = Vec::new();
-            collect_idents(ast, code, &mut uses);
-            (None, uses)
-        }
-    }
-}
-
-fn set_hash(s: &HashSet<String>) -> u64 {
-    let mut v: Vec<_> = s.iter().collect();
-    v.sort(); // deterministic
-    let mut h = DefaultHasher::new();
-    v.hash(&mut h);
-    h.finish()
-}
-
-fn apply_taint(node: &NodeInfo, taint: &HashSet<String>) -> HashSet<String> {
-    let mut out = taint.clone();
-
-    match node.label {
-        // A new untrusted value enters the program
-        Some(DataLabel::Source(_)) => {
-            if let Some(d) = &node.defines {
-                out.insert(d.clone());
-            }
-        }
-        // Anything written by a sanitizer becomes clean – whatever its
-        // arguments were is irrelevant here.
-        Some(DataLabel::Sanitizer(_)) => {
-            if let Some(d) = &node.defines {
-                out.remove(d);
-            }
-        }
-
-        // A function call *returning* tainted/clean data ----------------------
-        // (`let v = source_*()` or `let v = sanitize_*(x)`)
-        _ if node.kind == StmtKind::Call => {
-            if let Some(d) = &node.defines {
-                match node.label {
-                    Some(DataLabel::Source(_)) => {
-                        out.insert(d.clone());
-                    } // gen
-                    Some(DataLabel::Sanitizer(_)) => {
-                        out.remove(d);
-                    } // kill
-                    _ => { /* normal flow handled below */ }
-                }
-            }
-        }
-
-        // All other statements: classic gen/kill for assignments
-        _ => {
-            if let Some(d) = &node.defines {
-                let rhs_tainted = node.uses.iter().any(|u| out.contains(u));
-                if rhs_tainted {
-                    out.insert(d.clone());
-                } else {
-                    out.remove(d);
-                }
-            }
-        }
-    }
-
-    out
-}
-
-pub fn analyse_function(cfg: &Cfg, entry: NodeIndex) -> Vec<Vec<NodeIndex>> {
-    use std::collections::{HashMap, HashSet, VecDeque};
-
-    /// Queue item: current CFG node + taint map that holds here
-    #[derive(Clone)]
-    struct Item {
-        node: NodeIndex,
-        taint: HashSet<String>,
-    }
-
-    // (node, taint_hash)  →  predecessor key   (for path rebuild)
-    type Key = (NodeIndex, u64);
-    let mut pred: HashMap<Key, Key> = HashMap::new();
-
-    // Seen states so we do not revisit them infinitely
-    let mut seen: HashSet<Key> = HashSet::new();
-
-    // Resulting Source→Sink paths
-    let mut findings: Vec<Vec<NodeIndex>> = Vec::new();
-
-    let mut q = VecDeque::new();
-    q.push_back(Item {
-        node: entry,
-        taint: HashSet::new(),
-    });
-    seen.insert((entry, 0));
-
-    while let Some(Item { node, taint }) = q.pop_front() {
-        let updated = apply_taint(&cfg[node], &taint); // step effect
-
-        /* ----------     SINK CHECK     ---------- */
-        if let Some(DataLabel::Sink(_)) = cfg[node].label {
-            if cfg[node].uses.iter().any(|u| updated.contains(u)) {
-                // reconstruct path back to *any* Source
-                let mut p: Vec<NodeIndex> = vec![node];
-                let mut k = (node, set_hash(&taint)); // predecessor key
-
-                while let Some(&(prev, _)) = pred.get(&k) {
-                    p.push(prev);
-                    if matches!(cfg[prev].label, Some(DataLabel::Source(_))) {
-                        break;
-                    }
-                    // climb further
-                    let prev_hash = pred.get(&k).map(|(_, h)| *h).unwrap_or(0);
-                    k = (prev, prev_hash);
-                }
-                p.reverse();
-                findings.push(p);
-            }
-        }
-
-        /* ----------   BFS successor step   ---------- */
-        for succ in cfg.neighbors(node) {
-            let key = (succ, set_hash(&updated));
-            if !seen.contains(&key) {
-                seen.insert(key);
-                pred.insert(key, (node, set_hash(&taint)));
-                q.push_back(Item {
-                    node: succ,
-                    taint: updated.clone(),
-                });
-            }
-        }
-    }
-
-    findings
-}
-
-#[test]
-fn env_to_arg_is_flagged() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::env; use std::process::Command;
-        fn main() {
-            let x = env::var("DANGEROUS_ARG").unwrap();
-            Command::new("sh").arg(x).status().unwrap();
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-
-    assert_eq!(findings.len(), 1); // exactly one unsanitised Source→Sink
-}
-
-#[test]
-fn taint_through_if_else() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::env; use std::process::Command;
-        fn main() {
-            let x = env::var("DANGEROUS").unwrap();
-            let safe = html_escape::encode_safe(&x);
-
-            if x.len() > 5 {
-                Command::new("sh").arg(&x).status().unwrap();   // UNSAFE
-            } else {
-                Command::new("sh").arg(&safe).status().unwrap(); // SAFE
-            }
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-
-    // exactly one path (via the True branch) should be flagged
-    assert_eq!(findings.len(), 1);
-}
-
-#[test]
-fn taint_through_while_loop() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::{env, process::Command};
-        fn main() {
-            let mut x = env::var("DANGEROUS").unwrap();
-            while x.len() < 100 {                       // Loop header (Loop)
-                x.push_str("a");
-            }
-            Command::new("sh").arg(x).status().unwrap(); // Should be flagged
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-    assert_eq!(findings.len(), 1);
-}
-
-#[test]
-fn taint_killed_by_sanitizer() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::{env, process::Command};
-        fn main() {
-            let x = env::var("DANGEROUS").unwrap();
-            let clean = html_escape::encode_safe(&x);    // sanitizer node
-            Command::new("sh").arg(clean).status().unwrap();  // SAFE
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-    assert!(findings.is_empty());
-}
-
-#[test]
-fn taint_breaks_out_of_loop() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::{env, process::Command};
-        fn main() {
-            loop {
-                let x = env::var("DANGEROUS").unwrap();
-                Command::new("sh").arg(&x).status().unwrap(); // vulnerable
-                break;
-            }
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-    assert_eq!(findings.len(), 1);
-}
-
-#[test]
-fn test_two_sources() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::{env, process::Command};
-        fn main() {
-            let x = env::var("DANGEROUS").unwrap();
-            let y = env::var("SAFE").unwrap();
-            let clean = html_escape::encode_safe(&y);
-            Command::new("sh").arg(x).status().unwrap();
-            Command::new("sh").arg(clean).status().unwrap();
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-    assert_eq!(findings.len(), 1);
-}
-
-#[test]
-fn test_should_not_panic_on_empty_function() {
-    use tree_sitter::Language;
-    let src = br#"
-        use std::{env, process::Command};
-        fn f() {
-            if cond() {
-                return;
-            }
-            do_something();
-        }"#;
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&Language::from(tree_sitter_rust::LANGUAGE))
-        .unwrap();
-    let tree = parser.parse(src as &[u8], None).unwrap();
-
-    let (cfg, entry) = build_cfg(&tree, src, "rust");
-    let findings = analyse_function(&cfg, entry);
-    assert!(findings.is_empty());
-}
