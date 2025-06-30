@@ -6,9 +6,9 @@ mod database;
 mod errors;
 mod labels;
 mod patterns;
+mod taint;
 mod utils;
 mod walk;
-mod taint;
 
 use crate::errors::NyxResult;
 use crate::utils::Config;

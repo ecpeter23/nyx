@@ -2,14 +2,14 @@ use crate::cfg::{build_cfg, dump_cfg};
 use crate::commands::scan::Diag;
 use crate::errors::{NyxError, NyxResult};
 use crate::patterns::Severity;
+use crate::taint::analyse_file;
 use crate::utils::config::AnalysisMode;
 use crate::utils::ext::lowercase_ext;
 use crate::utils::{Config, query_cache};
+use log::debug;
 use std::cell::RefCell;
 use std::path::Path;
-use log::debug;
 use tree_sitter::{Language, QueryCursor, StreamingIterator};
-use crate::taint::analyse_file;
 
 thread_local! {
     static PARSER: RefCell<tree_sitter::Parser> = RefCell::new(tree_sitter::Parser::new());
@@ -68,7 +68,7 @@ pub(crate) fn run_rules_on_file(path: &Path, cfg: &Config) -> NyxResult<Vec<Diag
         tracing::debug!("Running taint analysis on: {}", path.display());
         let (cfg_graph, entry, summaries) = build_cfg(&_tree, &bytes, lang_slug);
         tracing::warn!("Func summaries: {:?}", summaries);
-        for p in analyse_file(&cfg_graph, entry) {
+        for p in analyse_file(&cfg_graph, entry, &summaries) {
             let src_byte = cfg_graph[p.first().copied().unwrap()].span.0;
             let point = byte_offset_to_point(&_tree, src_byte);
 

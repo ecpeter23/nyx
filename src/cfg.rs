@@ -3,7 +3,7 @@ use petgraph::prelude::*;
 use tracing::debug;
 use tree_sitter::{Node, Tree};
 
-use crate::labels::{DataLabel, Kind, classify, lookup, Cap};
+use crate::labels::{Cap, DataLabel, Kind, classify, lookup};
 use std::collections::{HashMap, HashSet};
 // WHAT WE STILL NEED TO DO:
 // todo: add the cap labels and remove the bit flags after each sanitizer, checking the bit flags with the sink
@@ -20,7 +20,6 @@ use std::collections::{HashMap, HashSet};
 // 3.
 
 // Questions: Do we want to analyze taint on a per function basis as we are building the CFG, or do we want to analyze the whole CFG at once?
-
 
 /// -------------------------------------------------------------------------
 ///  Public AST‑to‑CFG data structures
@@ -53,10 +52,11 @@ pub struct NodeInfo {
     pub label: Option<DataLabel>, // taint classification if any
     pub defines: Option<String>,  // variable written by this stmt
     pub uses: Vec<String>,        // variables read
+    pub callee: Option<String>,
 }
 
 pub type Cfg = Graph<NodeInfo, EdgeKind>;
-type FuncSummaries = HashMap<String, (NodeIndex, NodeIndex, Option<DataLabel>)>;
+pub type FuncSummaries = HashMap<String, (NodeIndex, NodeIndex, Option<DataLabel>)>;
 
 // -------------------------------------------------------------------------
 //                      Utility helpers
@@ -110,7 +110,7 @@ fn first_call_ident<'a>(n: Node<'a>, lang: &str, code: &'a [u8]) -> Option<Strin
 /// Recursively collect every identifier that occurs inside `n`.
 fn collect_idents(n: Node, code: &[u8], out: &mut Vec<String>) {
     if n.kind() == "identifier" {
-        if let Some(txt) = crate::cfg::text_of(n, code) {
+        if let Some(txt) = text_of(n, code) {
             out.push(txt);
         }
     } else {
@@ -141,7 +141,7 @@ fn def_use(ast: Node, lang: &str, code: &[u8]) -> (Option<String>, Vec<String>) 
             (defs, uses)
         }
 
-        // Plain assignment `x = y + z`
+        // Plain assignment `x = y  z`
         "assignment_expression" => {
             let mut defs = None;
             let mut uses = Vec::new();
@@ -226,12 +226,19 @@ fn push_node<'a>(
 
     let (defines, uses) = def_use(ast, lang, code);
 
+    let callee = if kind == StmtKind::Call {
+        Some(text.clone())
+    } else {
+        None
+    };
+
     let idx = g.add_node(NodeInfo {
         kind,
         span,
         label,
         defines,
         uses,
+        callee,
     });
 
     debug!(
@@ -244,46 +251,6 @@ fn push_node<'a>(
         label
     );
     idx
-}
-
-// DEBUG TODO REMOVE
-fn dump_node(node: Node, source: &[u8], indent: usize) {
-    let indent_str = " ".repeat(indent);
-    // Basic info
-    log::debug!(
-        target: "cfg-experimental",
-        "{}kind = {:?}, bytes = {}..{}, positions = {:?}..{:?}",
-        indent_str,
-        node.kind(),
-        node.start_byte(),
-        node.end_byte(),
-        node.start_position(),
-        node.end_position()
-    );
-
-    // The actual source text covered by the node
-    if let Ok(text) = node.utf8_text(source) {
-        log::debug!(target: "cfg-experimental", "{}text = {:?}", indent_str, text);
-    }
-
-    // S-expression of this node + all its children
-    log::debug!(
-        target: "cfg-experimental",
-        "{}sexp = {}",
-        indent_str,
-        node.to_sexp()
-    );
-
-    // Field name (if any) on the parent’s side
-    // if let Some(field) = node.field_name() {
-    //     log::debug!(target: "cfg-experimental", "{}field name = {:?}", indent_str, field);
-    // }
-
-    // Recurse into children
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        dump_node(child, source, indent + 2);
-    }
 }
 
 /// Add the same edge (of the same kind) from every node in `froms` to `to`.
@@ -443,69 +410,95 @@ fn build_sub<'a>(
             connect_all(g, preds, entry_idx, EdgeKind::Seq);
 
             // 2) build its body
-            let body         = ast.child_by_field_name("body").expect("fn w/o body");
-            let body_exits   = build_sub(body, &[entry_idx], g, lang, code, summaries);
+            let body = ast.child_by_field_name("body").expect("fn w/o body");
+            let body_exits = build_sub(body, &[entry_idx], g, lang, code, summaries);
 
-        // ───── 3) light-weight dataflow + capture both explicit & implicit returns ─
-                   let mut var_taint   = HashMap::<String, Cap>::new();
-                   let mut node_bits   = HashMap::<NodeIndex, Cap>::new();
-                   let mut fn_src_bits = Cap::empty();
+            // ───── 3) light-weight dataflow + capture both explicit & implicit returns ─
+            let mut var_taint = HashMap::<String, Cap>::new();
+            let mut node_bits = HashMap::<NodeIndex, Cap>::new();
+            let mut fn_src_bits = Cap::empty();
+            let mut fn_sani_bits = Cap::empty();
+            let mut fn_sink_bits = Cap::empty();
 
-                   // first, sweep *all* nodes in this function and record their out_bits
-                   for idx in g.node_indices() {
-                       let info = &g[idx];
-                       if info.span.0 < ast.start_byte() || info.span.1 > ast.end_byte() {
-                           continue;
-                       }
+            // first, sweep *all* nodes in this function and record their out_bits
+            for idx in g.node_indices() {
+                let info = &g[idx];
+                if info.span.0 < ast.start_byte() || info.span.1 > ast.end_byte() {
+                    continue;
+                }
 
-                   //  a) incoming taint from any vars we read
-                   let mut in_bits = Cap::empty();
-                   for u in &info.uses {
-                       if let Some(b) = var_taint.get(u) {
-                           in_bits |= *b;
-                       }
-                   }
+                // record any explicit sanitizer caps
+                if let Some(DataLabel::Sanitizer(bits)) = info.label {
+                        fn_sani_bits |= bits;
+                    }
+                // record any explicit sink caps
+                if let Some(DataLabel::Sink(bits)) = info.label {
+                        fn_sink_bits |= bits;
+                    }
+                // record any explicit source caps
+                if let Some(DataLabel::Source(bits)) = info.label {
+                        fn_src_bits |= bits;
+                    }
 
-                   //  b) apply this node’s own label
-                   let mut out_bits = in_bits;
-                   if let Some(lab) = &info.label {
-                       match *lab {
-                           DataLabel::Source(bits)    => out_bits |= bits,
-                           DataLabel::Sanitizer(bits) => out_bits &= !bits,
-                           DataLabel::Sink(_)         => { /* no-op */ }
-                       }
-                   }
+                //  a) incoming taint from any vars we read
+                let mut in_bits = Cap::empty();
+                for u in &info.uses {
+                    if let Some(b) = var_taint.get(u) {
+                        in_bits |= *b;
+                    }
+                }
 
-                   //  c) write it back to the var we define (if any)
-                   if let Some(def) = &info.defines {
-                       if out_bits.is_empty() {
-                           var_taint.remove(def);
-                       } else {
-                           var_taint.insert(def.clone(), out_bits);
-                       }
-                   }
+                //  b) apply this node’s own label
+                let mut out_bits = in_bits;
+                if let Some(lab) = &info.label {
+                    match *lab {
+                        DataLabel::Source(bits) => out_bits |= bits,
+                        DataLabel::Sanitizer(bits) => out_bits &= !bits,
+                        DataLabel::Sink(_) => { /* no-op */ }
+                    }
+                }
 
-                   //  d) stash it for later
-                   node_bits.insert(idx, out_bits);
-               }
+                //  c) write it back to the var we define (if any)
+                if let Some(def) = &info.defines {
+                    if out_bits.is_empty() {
+                        var_taint.remove(def);
+                    } else {
+                        var_taint.insert(def.clone(), out_bits);
+                    }
+                }
 
-               // now fold in any *explicit* returns
-               for (&idx, &bits) in &node_bits {
-                   if g[idx].kind == StmtKind::Return {
-                       fn_src_bits |= bits;
-                   }
-               }
+                //  d) stash it for later
+                node_bits.insert(idx, out_bits);
+            }
 
-               // …and *implicit* returns via fall-through from each exit predecessor
-               for &pred in &body_exits {
-                   if let Some(&bits) = node_bits.get(&pred) {
-                       fn_src_bits |= bits;
-                   }
-               }
+            // now fold in any *explicit* returns
+            for (&idx, &bits) in &node_bits {
+                if g[idx].kind == StmtKind::Return {
+                    fn_src_bits |= bits;
+                }
+            }
 
-               let fn_label = fn_src_bits.is_empty()
-                   .then(|| None)
-                   .unwrap_or(Some(DataLabel::Source(fn_src_bits)));
+            // …and *implicit* returns via fall-through from each exit predecessor
+            for &pred in &body_exits {
+                if let Some(&bits) = node_bits.get(&pred) {
+                    fn_src_bits |= bits;
+                }
+            }
+
+            let fn_label = fn_src_bits
+                .is_empty()
+                .then(|| None)
+                .unwrap_or(Some(DataLabel::Source(fn_src_bits)));
+
+            let fn_summary_label = if !fn_sink_bits.is_empty() {
+                Some(DataLabel::Sink(fn_sink_bits))
+            } else if !fn_sani_bits.is_empty() {
+            Some(DataLabel::Sanitizer(fn_sani_bits))
+        } else if !fn_src_bits.is_empty() {
+            Some(DataLabel::Source(fn_src_bits))
+        } else {
+            None
+        };
 
             /* ───── 4) synthesise an explicit exit-node and wire it up ──────────── */
             let exit_idx = g.add_node(NodeInfo {
@@ -514,13 +507,14 @@ fn build_sub<'a>(
                 label: None,
                 defines: None,
                 uses: Vec::new(),
+                callee: None,
             });
             for &b in &body_exits {
                 connect_all(g, &[b], exit_idx, EdgeKind::Seq);
             }
 
             /* ───── 5) store the summary – *don’t* overwrite it later! ──────────── */
-            summaries.insert(fn_name.clone(), (entry_idx, exit_idx, fn_label));
+            summaries.insert(fn_name.clone(), (entry_idx, exit_idx, fn_summary_label));
 
             vec![exit_idx]
         }
@@ -580,7 +574,11 @@ fn build_sub<'a>(
 ///   the graph compact.
 /// * Wires a synthetic `Entry` node in front and a synthetic `Exit` node after
 ///   all real sinks.
-pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg, NodeIndex, FuncSummaries) {
+pub(crate) fn build_cfg<'a>(
+    tree: &'a Tree,
+    code: &'a [u8],
+    lang: &str,
+) -> (Cfg, NodeIndex, FuncSummaries) {
     debug!(target: "cfg", "Building CFG for {:?}", tree.root_node());
 
     let mut g: Cfg = Graph::with_capacity(128, 256);
@@ -591,6 +589,7 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg,
         label: None,
         defines: None,
         uses: Vec::new(),
+        callee: None,
     });
     let exit = g.add_node(NodeInfo {
         kind: StmtKind::Exit,
@@ -598,10 +597,18 @@ pub(crate) fn build_cfg<'a>(tree: &'a Tree, code: &'a [u8], lang: &str) -> (Cfg,
         label: None,
         defines: None,
         uses: Vec::new(),
+        callee: None,
     });
 
     // Build the body below the synthetic ENTRY.
-    let exits = build_sub(tree.root_node(), &[entry], &mut g, lang, code, &mut summaries);
+    let exits = build_sub(
+        tree.root_node(),
+        &[entry],
+        &mut g,
+        lang,
+        code,
+        &mut summaries,
+    );
     debug!(target: "cfg", "exits: {:?}", exits);
     // Wire every real exit to our synthetic EXIT node.
     for e in exits {
@@ -669,4 +676,3 @@ pub(crate) fn dump_cfg(g: &Cfg) {
         );
     }
 }
-
