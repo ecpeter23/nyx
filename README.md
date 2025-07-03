@@ -134,10 +134,11 @@ $ nyx clean --all
 
 Nyx merges a default configuration file (`nyx.conf`) with user overrides (`nyx.local`). Both live in the platform‑specific configuration directory shown below.
 
-| Platform      | Directory                         |
-|---------------|-----------------------------------|
-| Linux / macOS | `~/.config/nyx/`                  |
-| Windows       | `%APPDATA%\ecpeter23\nyx\config\` |
+| Platform      | Directory                                          |
+|---------------|----------------------------------------------------|
+| Linux         | `~/.config/nyx/`                                   |
+| macOS         | `~/Library/Application Support/dev.ecpeter23.nyx/` |
+| Windows       | `%APPDATA%\ecpeter23\nyx\config\`                  |
 
 Minimal example (`nyx.local`):
 
