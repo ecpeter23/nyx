@@ -14,45 +14,64 @@ use crate::utils::Config;
 
 type Batch = Vec<PathBuf>;
 
-struct Batcher {
+struct BatchSender {
     tx: Sender<Batch>,
     batch: Batch,
+    batch_size: usize,
 }
-impl Batcher {
-    fn push(&mut self, p: PathBuf, batch_size: usize) {
-        self.batch.push(p);
-        if self.batch.len() == batch_size {
+impl BatchSender {
+    fn new(tx: Sender<Batch>, batch_size: usize) -> Self {
+        Self {
+            tx,
+            batch: Vec::with_capacity(batch_size),
+            batch_size,
+        }
+    }
+
+    fn push(&mut self, path: PathBuf) {
+        self.batch.push(path);
+        if self.batch.len() >= self.batch_size {
             self.flush();
         }
     }
+
     fn flush(&mut self) {
         if !self.batch.is_empty() {
             let _ = self.tx.send(mem::take(&mut self.batch));
         }
     }
 }
-impl Drop for Batcher {
+impl Drop for BatchSender {
     fn drop(&mut self) {
         self.flush();
     }
 }
 
-// ---------------------------------------------------------------------------
-/// Walk `root` and send *batches* of paths through the returned channel.
-pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
-    // ----- 1  build ignore/override rules ----------------------------------
+fn build_overrides(root: &Path, cfg: &Config) -> ignore::overrides::Override {
     let mut ob = OverrideBuilder::new(root);
+
     for ext in &cfg.scanner.excluded_extensions {
         if let Err(e) = ob.add(&format!("!*.{ext}")) {
-            tracing::warn!("cannot add ignore pattern ‘{ext}’: {e}");
+            tracing::warn!("invalid exclude‐extension pattern ‘{ext}’: {e}");
         }
     }
     for dir in &cfg.scanner.excluded_directories {
         if let Err(e) = ob.add(&format!("!**/{dir}/**")) {
-            tracing::warn!("cannot add ignore pattern ‘{dir}’: {e}");
+            tracing::warn!("invalid exclude‐dir pattern ‘{dir}’: {e}");
         }
     }
-    let overrides = ob.build().unwrap();
+
+    ob.build()
+        .unwrap_or_else(|e| {
+            tracing::error!("failed to build ignore overrides: {e}");
+            ignore::overrides::Override::empty()
+        })
+}
+
+// ---------------------------------------------------------------------------
+/// Walk `root` and send *batches* of paths through the returned channel.
+pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
+    let overrides = build_overrides(root, cfg);
 
     // ----- 2  channel & thread pool parameters -----------------------------
     let workers = cfg.performance.worker_threads.unwrap_or(num_cpus::get());
@@ -71,12 +90,10 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
             .follow_links(follow)
             .threads(workers)
             .overrides(overrides)
+            .filter_entry(|e| e.file_type().map(|ft| ft.is_dir() || ft.is_file()).unwrap_or(true))
             .build_parallel()
             .run(move || {
-                let mut b = Batcher {
-                    tx: tx.clone(),
-                    batch: Vec::with_capacity(batch_size),
-                };
+                let mut b = BatchSender::new(tx.clone(), batch_size);
 
                 Box::new(move |entry| {
                     tracing::debug!("walking {:?}", entry);
@@ -97,7 +114,7 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
                     }
 
                     tracing::debug!("sending {:?}", entry);
-                    b.push(entry.into_path(), batch_size);
+                    b.push(entry.into_path());
                     WalkState::Continue
                 })
             });
