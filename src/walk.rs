@@ -37,6 +37,7 @@ impl BatchSender {
 
     fn flush(&mut self) {
         if !self.batch.is_empty() {
+            tracing::debug!(n_paths = self.batch.len(), "flushing batch");
             let _ = self.tx.send(mem::take(&mut self.batch));
         }
     }
@@ -61,11 +62,10 @@ fn build_overrides(root: &Path, cfg: &Config) -> ignore::overrides::Override {
         }
     }
 
-    ob.build()
-        .unwrap_or_else(|e| {
-            tracing::error!("failed to build ignore overrides: {e}");
-            ignore::overrides::Override::empty()
-        })
+    ob.build().unwrap_or_else(|e| {
+        tracing::error!("failed to build ignore overrides: {e}");
+        ignore::overrides::Override::empty()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -85,39 +85,42 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
 
     // ----- 3  the background walker thread ---------------------------------
     thread::spawn(move || {
+        tracing::info!(
+            root = ?root,
+            workers = workers,
+            scan_hidden = scan_hidden,
+            follow_links = follow,
+            max_bytes = max_bytes,
+            batch_size = batch_size,
+            "starting directory walk"
+        );
+
         WalkBuilder::new(root)
             .hidden(!scan_hidden)
             .follow_links(follow)
             .threads(workers)
             .overrides(overrides)
-            .filter_entry(|e| e.file_type().map(|ft| ft.is_dir() || ft.is_file()).unwrap_or(true))
+            .filter_entry(|e| {
+                e.file_type()
+                    .map(|ft| ft.is_dir() || ft.is_file())
+                    .unwrap_or(true)
+            })
             .build_parallel()
             .run(move || {
-                let mut b = BatchSender::new(tx.clone(), batch_size);
+                let mut bs = BatchSender::new(tx.clone(), batch_size);
 
                 Box::new(move |entry| {
-                    tracing::debug!("walking {:?}", entry);
-                    let entry = match entry {
-                        Ok(e) if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) => e,
-                        _ => return WalkState::Continue,
-                    };
-
-                    if max_bytes != 0 {
-                        match entry.metadata() {
-                            Ok(m) if m.len() > max_bytes => return WalkState::Continue,
-                            Err(e) => {
-                                tracing::debug!("metadata failed for {:?}: {e}", entry.path());
-                                return WalkState::Continue;
-                            }
-                            _ => {}
-                        }
+                    if let Ok(e) = entry
+                        && e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                        && (max_bytes == 0
+                            || e.metadata().map(|m| m.len() <= max_bytes).unwrap_or(true))
+                    {
+                        bs.push(e.into_path());
                     }
-
-                    tracing::debug!("sending {:?}", entry);
-                    b.push(entry.into_path());
                     WalkState::Continue
                 })
             });
+        tracing::info!("directory walk complete");
     });
 
     rx
