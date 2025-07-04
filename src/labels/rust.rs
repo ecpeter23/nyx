@@ -4,21 +4,23 @@ use phf::{Map, phf_map};
 pub static RULES: &[LabelRule] = &[
     // ─────────── Sources ───────────
     LabelRule {
-        matchers: &["std::env::var", "env::var"],
+        matchers: &["std::env::var", "env::var", "source_env"],
+        label: DataLabel::Source(Cap::all()),
+    },
+    LabelRule {
+        matchers: &["fs::read_to_string", "source_file"],
         label: DataLabel::Source(Cap::all()),
     },
     // ───────── Sanitizers ──────────
-    // `fn sanitize_*(&str) -> String`
     LabelRule {
         matchers: &["html_escape::encode_safe", "sanitize_", "sanitize_html"],
         label: DataLabel::Sanitizer(Cap::HTML_ESCAPE),
     },
     LabelRule {
-        matchers: &["shell_escape::unix::escape"],
+        matchers: &["shell_escape::unix::escape", "sanitize_shell"],
         label: DataLabel::Sanitizer(Cap::SHELL_ESCAPE),
     },
     // ─────────── Sinks ─────────────
-    //  All the key points where untrusted strings reach the OS shell.
     LabelRule {
         matchers: &[
             "command::new",
@@ -29,6 +31,10 @@ pub static RULES: &[LabelRule] = &[
             "command::output",
         ],
         label: DataLabel::Sink(Cap::SHELL_ESCAPE),
+    },
+    LabelRule {
+        matchers: &["println", "sink_html"],
+        label: DataLabel::Sink(Cap::HTML_ESCAPE),
     },
 ];
 

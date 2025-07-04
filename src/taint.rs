@@ -1,26 +1,20 @@
-use crate::cfg::{Cfg, FuncSummaries, NodeInfo, StmtKind, build_cfg};
+use crate::cfg::{Cfg, FuncSummaries, NodeInfo, StmtKind};
 use crate::labels::{Cap, DataLabel};
 use petgraph::graph::NodeIndex;
-use std::collections::{HashMap, HashSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::collections::{HashMap};
+use blake3;
 use tracing::debug;
 
-fn set_hash(s: &HashSet<String>) -> u64 {
-    let mut v: Vec<_> = s.iter().collect();
-    v.sort(); // deterministic
-    let mut h = DefaultHasher::new();
-    v.hash(&mut h);
-    h.finish()
-}
 fn taint_hash(taint: &HashMap<String, Cap>) -> u64 {
     let mut v: Vec<_> = taint.iter().collect();
-    v.sort_by_key(|(k,_)| k.clone());
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+    v.sort_by_key(|(k, _)| k.as_str());
+    let mut hasher = blake3::Hasher::new();
     for (k, bits) in v {
-        k.hash(&mut h);
-        bits.bits().hash(&mut h);
+        hasher.update(k.as_bytes());
+        hasher.update(&bits.bits().to_le_bytes());
     }
-    h.finish()
+    let digest = hasher.finalize();
+    u64::from_le_bytes(digest.as_bytes()[0..8].try_into().unwrap())
 }
 
 fn apply_taint(
@@ -45,8 +39,11 @@ fn apply_taint(
             if let Some(v) = &node.defines {
                 if let Some(existing) = out.get(v) {
                     let new = *existing & !bits;
-                    if new.is_empty() { out.remove(v); }
-                    else             { out.insert(v.clone(), new); }
+                    if new.is_empty() {
+                        out.remove(v);
+                    } else {
+                        out.insert(v.clone(), new);
+                    }
                 }
             }
         }
@@ -66,8 +63,11 @@ fn apply_taint(
                             if let Some(v) = &node.defines {
                                 if let Some(existing) = out.get(v) {
                                     let new = *existing & !bits;
-                                    if new.is_empty() { out.remove(v); }
-                                    else             { out.insert(v.clone(), new); }
+                                    if new.is_empty() {
+                                        out.remove(v);
+                                    } else {
+                                        out.insert(v.clone(), new);
+                                    }
                                 }
                             }
                         }
@@ -130,14 +130,16 @@ pub fn analyse_file(cfg: &Cfg, entry: NodeIndex, summaries: &FuncSummaries) -> V
     });
     seen.insert((entry, 0));
 
-    while let Some(Item{node, taint}) = q.pop_front() {
+    while let Some(Item { node, taint }) = q.pop_front() {
         let out = apply_taint(&cfg[node], &taint, summaries);
 
         // if this node *is* a sink‐call, check it:
         if let Some(DataLabel::Sink(sink_caps)) = cfg[node].label {
             // did any arg still carry any sink bit?
-            let bad = cfg[node].uses.iter()
-                .any(|u| out.get(u).map_or(false, |b| (*b & sink_caps) != Cap::empty()));
+            let bad = cfg[node].uses.iter().any(|u| {
+                out.get(u)
+                    .map_or(false, |b| (*b & sink_caps) != Cap::empty())
+            });
             if bad {
                 // reconstruct path back to some prior Source
                 let mut path = vec![node];
@@ -175,6 +177,7 @@ pub fn analyse_file(cfg: &Cfg, entry: NodeIndex, summaries: &FuncSummaries) -> V
 
 #[test]
 fn env_to_arg_is_flagged() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::env; use std::process::Command;
@@ -197,6 +200,7 @@ fn env_to_arg_is_flagged() {
 
 #[test]
 fn taint_through_if_else() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::env; use std::process::Command;
@@ -226,6 +230,7 @@ fn taint_through_if_else() {
 
 #[test]
 fn taint_through_while_loop() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::{env, process::Command};
@@ -250,6 +255,7 @@ fn taint_through_while_loop() {
 
 #[test]
 fn taint_killed_by_sanitizer() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::{env, process::Command};
@@ -272,6 +278,7 @@ fn taint_killed_by_sanitizer() {
 
 #[test]
 fn taint_breaks_out_of_loop() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::{env, process::Command};
@@ -296,6 +303,7 @@ fn taint_breaks_out_of_loop() {
 
 #[test]
 fn test_two_sources() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::{env, process::Command};
@@ -320,6 +328,7 @@ fn test_two_sources() {
 
 #[test]
 fn test_should_not_panic_on_empty_function() {
+    use crate::cfg::{build_cfg};
     use tree_sitter::Language;
     let src = br#"
         use std::{env, process::Command};

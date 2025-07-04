@@ -5,22 +5,22 @@ use std::{
     path::{Path, PathBuf},
     thread,
 };
-
+use std::thread::JoinHandle;
 use crate::utils::Config;
 
 // ---------------------------------------------------------------------------
 // Internal constants / helpers
 // ---------------------------------------------------------------------------
 
-type Batch = Vec<PathBuf>;
+type Paths = Vec<PathBuf>;
 
 struct BatchSender {
-    tx: Sender<Batch>,
-    batch: Batch,
+    tx: Sender<Paths>,
+    batch: Paths,
     batch_size: usize,
 }
 impl BatchSender {
-    fn new(tx: Sender<Batch>, batch_size: usize) -> Self {
+    fn new(tx: Sender<Paths>, batch_size: usize) -> Self {
         Self {
             tx,
             batch: Vec::with_capacity(batch_size),
@@ -28,7 +28,7 @@ impl BatchSender {
         }
     }
 
-    fn push(&mut self, path: PathBuf) {
+    fn push_path(&mut self, path: PathBuf) {
         self.batch.push(path);
         if self.batch.len() >= self.batch_size {
             self.flush();
@@ -70,12 +70,12 @@ fn build_overrides(root: &Path, cfg: &Config) -> ignore::overrides::Override {
 
 // ---------------------------------------------------------------------------
 /// Walk `root` and send *batches* of paths through the returned channel.
-pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
+pub fn spawn_file_walker(root: &Path, cfg: &Config) -> (Receiver<Paths>, JoinHandle<()>) {
     let overrides = build_overrides(root, cfg);
 
     // ----- 2  channel & thread pool parameters -----------------------------
     let workers = cfg.performance.worker_threads.unwrap_or(num_cpus::get());
-    let (tx, rx) = bounded::<Batch>(workers * cfg.performance.channel_multiplier);
+    let (tx, rx) = bounded::<Paths>(workers * cfg.performance.channel_multiplier);
 
     let root = root.to_path_buf();
     let scan_hidden = cfg.scanner.scan_hidden_files;
@@ -84,7 +84,7 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
     let batch_size = cfg.performance.batch_size;
 
     // ----- 3  the background walker thread ---------------------------------
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         tracing::info!(
             root = ?root,
             workers = workers,
@@ -115,15 +115,15 @@ pub fn spawn_senders(root: &Path, cfg: &Config) -> Receiver<Batch> {
                         && (max_bytes == 0
                             || e.metadata().map(|m| m.len() <= max_bytes).unwrap_or(true))
                     {
-                        bs.push(e.into_path());
+                        bs.push_path(e.into_path());
                     }
                     WalkState::Continue
                 })
             });
         tracing::info!("directory walk complete");
     });
-
-    rx
+    
+    (rx, handle)
 }
 
 #[test]
@@ -138,7 +138,10 @@ fn walker_respects_excluded_extensions() {
     cfg.performance.channel_multiplier = 1;
     cfg.performance.batch_size = 2;
 
-    let rx = spawn_senders(tmp.path(), &cfg);
+    let (rx, handle) = spawn_file_walker(tmp.path(), &cfg);
+    if let Err(err) = handle.join() {
+        tracing::error!("walker thread panicked: {:#?}", err);
+    }
 
     let all: Vec<_> = rx.into_iter().flatten().collect();
 

@@ -123,6 +123,7 @@ fn collect_idents(n: Node, code: &[u8], out: &mut Vec<String>) {
 
 /// Return `(defines, uses)` for the AST fragment `ast`.
 fn def_use(ast: Node, lang: &str, code: &[u8]) -> (Option<String>, Vec<String>) {
+    // todo: figure out why lookup isn't working here
     match ast.kind() {
         // `let <pat> = <val>;`
         "let_declaration" => {
@@ -429,16 +430,16 @@ fn build_sub<'a>(
 
                 // record any explicit sanitizer caps
                 if let Some(DataLabel::Sanitizer(bits)) = info.label {
-                        fn_sani_bits |= bits;
-                    }
+                    fn_sani_bits |= bits;
+                }
                 // record any explicit sink caps
                 if let Some(DataLabel::Sink(bits)) = info.label {
-                        fn_sink_bits |= bits;
-                    }
+                    fn_sink_bits |= bits;
+                }
                 // record any explicit source caps
                 if let Some(DataLabel::Source(bits)) = info.label {
-                        fn_src_bits |= bits;
-                    }
+                    fn_src_bits |= bits;
+                }
 
                 //  a) incoming taint from any vars we read
                 let mut in_bits = Cap::empty();
@@ -485,20 +486,20 @@ fn build_sub<'a>(
                 }
             }
 
-            let fn_label = fn_src_bits
-                .is_empty()
-                .then(|| None)
-                .unwrap_or(Some(DataLabel::Source(fn_src_bits)));
+            // let fn_label = fn_src_bits
+            //     .is_empty()
+            //     .then(|| None)
+            //     .unwrap_or(Some(DataLabel::Source(fn_src_bits)));
 
             let fn_summary_label = if !fn_sink_bits.is_empty() {
                 Some(DataLabel::Sink(fn_sink_bits))
             } else if !fn_sani_bits.is_empty() {
-            Some(DataLabel::Sanitizer(fn_sani_bits))
-        } else if !fn_src_bits.is_empty() {
-            Some(DataLabel::Source(fn_src_bits))
-        } else {
-            None
-        };
+                Some(DataLabel::Sanitizer(fn_sani_bits))
+            } else if !fn_src_bits.is_empty() {
+                Some(DataLabel::Source(fn_src_bits))
+            } else {
+                None
+            };
 
             /* ───── 4) synthesise an explicit exit-node and wire it up ──────────── */
             let exit_idx = g.add_node(NodeInfo {
@@ -661,18 +662,18 @@ pub(crate) fn build_cfg<'a>(
     (g, entry, summaries)
 }
 
-pub(crate) fn dump_cfg(g: &Cfg) {
-    debug!(target: "taint", "CFG DUMP: nodes = {}, edges = {}", g.node_count(), g.edge_count());
-    for idx in g.node_indices() {
-        debug!(target: "taint", "  node {:>3}: {:?}", idx.index(), g[idx]);
-    }
-    for e in g.edge_references() {
-        debug!(
-            target: "taint",
-            "  edge {:>3} → {:<3} ({:?})",
-            e.source().index(),
-            e.target().index(),
-            e.weight()
-        );
-    }
-}
+// pub(crate) fn dump_cfg(g: &Cfg) {
+//     debug!(target: "taint", "CFG DUMP: nodes = {}, edges = {}", g.node_count(), g.edge_count());
+//     for idx in g.node_indices() {
+//         debug!(target: "taint", "  node {:>3}: {:?}", idx.index(), g[idx]);
+//     }
+//     for e in g.edge_references() {
+//         debug!(
+//             target: "taint",
+//             "  edge {:>3} → {:<3} ({:?})",
+//             e.source().index(),
+//             e.target().index(),
+//             e.weight()
+//         );
+//     }
+// }

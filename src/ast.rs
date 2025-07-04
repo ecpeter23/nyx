@@ -1,4 +1,4 @@
-use crate::cfg::{build_cfg, dump_cfg};
+use crate::cfg::{build_cfg};
 use crate::commands::scan::Diag;
 use crate::errors::{NyxError, NyxResult};
 use crate::patterns::Severity;
@@ -6,7 +6,6 @@ use crate::taint::analyse_file;
 use crate::utils::config::AnalysisMode;
 use crate::utils::ext::lowercase_ext;
 use crate::utils::{Config, query_cache};
-use log::debug;
 use std::cell::RefCell;
 use std::path::Path;
 use tree_sitter::{Language, QueryCursor, StreamingIterator};

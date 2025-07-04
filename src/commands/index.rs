@@ -4,12 +4,13 @@ use crate::errors::NyxResult;
 use crate::patterns::Severity;
 use crate::utils::Config;
 use crate::utils::project::get_project_info;
-use crate::walk::spawn_senders;
+use crate::walk::spawn_file_walker;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use console::style;
 use rayon::prelude::*;
 use std::fs;
+use std::path::PathBuf;
 use std::process::exit;
 
 pub fn handle(
@@ -94,11 +95,14 @@ pub fn build_index(
 
     tracing::debug!("Cleaned index for: {}", project_name);
 
-    let rx = spawn_senders(project_path, config);
-    let paths: Vec<_> = rx.into_iter().flatten().collect();
+    let (rx, handle) = spawn_file_walker(&project_path, &config);
+    if let Err(err) = handle.join() {
+        tracing::error!("walker thread panicked: {:#?}", err);
+    }
+    let paths: Vec<PathBuf> = rx.into_iter().flatten().collect();
 
     paths.into_par_iter().try_for_each(
-        |path| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        |path| -> NyxResult<()> {
             let issues = crate::commands::scan::run_rules_on_file(&path, config)?;
             let mut idx = Indexer::from_pool(project_name, &pool)?;
             let file_id = idx.upsert_file(&path)?;

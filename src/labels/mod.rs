@@ -22,7 +22,8 @@ bitflags! {
         const SHELL_ESCAPE = 0b0000_0100;
         const URL_ENCODE   = 0b0000_1000;
         const JSON_PARSE   = 0b0001_0000;
-        // ADD MORE
+        const FILE_IO      = 0b0010_0000;
+        // todo: add more if needed
     }
 }
 

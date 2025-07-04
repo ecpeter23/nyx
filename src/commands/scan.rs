@@ -4,7 +4,7 @@ use crate::errors::NyxResult;
 use crate::patterns::Severity;
 use crate::utils::config::Config;
 use crate::utils::project::get_project_info;
-use crate::walk::spawn_senders;
+use crate::walk::spawn_file_walker;
 use console::style;
 use dashmap::DashMap;
 use r2d2::Pool;
@@ -94,7 +94,10 @@ pub fn handle(
 // --------------------------------------------------------------------------------------------
 
 fn scan_filesystem(root: &Path, cfg: &Config) -> NyxResult<Vec<Diag>> {
-    let rx = spawn_senders(root, cfg);
+    let (rx, handle) = spawn_file_walker(root, cfg);
+    if let Err(err) = handle.join() {
+        tracing::error!("walker thread panicked: {:#?}", err);
+    }
     let acc = Mutex::new(Vec::new());
 
     rx.into_iter().flatten().par_bridge().try_for_each(|path| {
